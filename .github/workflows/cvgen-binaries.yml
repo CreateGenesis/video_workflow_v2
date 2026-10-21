@@ -1,0 +1,49 @@
+name: cvgen binaries
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - cli/**
+      - tools/requirements-cli.txt
+      - tools/build_nuitka.sh
+      - tools/build_release.py
+      - .github/workflows/cvgen-binaries.yml
+
+jobs:
+  build:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            platform: macos
+            binary: cvgen
+          - os: windows-2022
+            platform: windows
+            binary: cvgen.exe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile
+        shell: bash
+        run: |
+          set -eu
+          if [ "${{ matrix.platform }}" = "windows" ]; then
+            PYTHON="py -3"
+          else
+            PYTHON=python3
+          fi
+          PYTHON="$PYTHON" sh tools/build_nuitka.sh
+          test -f "tools/bin/${{ matrix.platform }}/${{ matrix.binary }}"
+          "$PYTHON" tools/build_release.py --binaries tools/bin --out tools/dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cvgen-${{ matrix.platform }}
+          path: tools/dist/cvgen-${{ matrix.platform == 'windows' && 'windows-x64' || 'macos' }}.zip
+          if-no-files-found: error

@@ -1,0 +1,10 @@
+.env
+runs/
+data/
+__pycache__/
+*.partial
+web/node_modules/
+web/dist/
+tools/dist/
+.venv/
+.cvgen/
