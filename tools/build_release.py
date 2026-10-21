@@ -1,8 +1,9 @@
-"""Package standalone cvgen binaries. The compile step is tools/build_nuitka.sh."""
+"""Zip native cvgen binaries. The product is one executable per archive."""
 
 from __future__ import annotations
 
 import argparse
+import os
 import stat
 import zipfile
 from pathlib import Path
@@ -10,60 +11,62 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 NOTE = """cvgen 操作工具
 
-这是独立可执行文件，不需要安装 Python，也不需要虚拟环境。
-
-Linux 包适用于 x86_64，系统 glibc 不低于 2.31。
-可直接运行的范围包括 Ubuntu 20.04 及更新、Debian 11 及更新、CentOS 8 / Rocky 8 / Alma 8 及更新、OpenCloudOS 9。
-它不能在只提供 musl 的 Alpine 上直接运行。
-macOS 与 Windows 包同样是对应系统的可执行文件；页面显示尚未构建时，表示还没有在该系统上编译。
-
-用法：
+这是原生可执行文件。解压后直接运行。
 Linux / macOS：./cvgen login --base 服务地址
 Windows：cvgen.exe login --base 服务地址
 
 网页管理员批准设备码后，这台 cvgen 才会在线。同时只能有一台在线。
 """
 
-PACKAGES = {
-    "linux": ("cvgen-linux-x64.zip", "cvgen"),
-    "macos": ("cvgen-macos.zip", "cvgen"),
-    "windows": ("cvgen-windows-x64.zip", "cvgen.exe"),
-}
+
+def _add(archive: zipfile.ZipFile, name: str, payload: bytes, executable: bool = False) -> None:
+    info = zipfile.ZipInfo(name)
+    mode = stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH
+    if not executable:
+        mode = stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH
+    info.external_attr = mode << 16
+    archive.writestr(info, payload)
 
 
 def package(out: Path, binaries: dict[str, Path]) -> list[Path]:
     out.mkdir(parents=True, exist_ok=True)
+    specs = {
+        "cvgen-linux-x64.zip": ("cvgen", binaries["linux"]),
+        "cvgen-macos.zip": ("cvgen", binaries["macos"]),
+        "cvgen-windows-x64.zip": ("cvgen.exe", binaries["windows"]),
+    }
+    selected = os.environ.get("CVGEN_PACK_ONLY", "")
     written = []
-    for platform, binary in binaries.items():
-        filename, inner = PACKAGES[platform]
+    for filename, (name, source) in specs.items():
+        platform = {"cvgen-linux-x64.zip": "linux", "cvgen-macos.zip": "macos", "cvgen-windows-x64.zip": "windows"}[filename]
+        if selected and platform != selected:
+            continue
+        data = source.read_bytes()
+        if name.endswith(".exe") and not data.startswith(b"MZ"):
+            raise SystemExit(f"{source} 不是 Windows 可执行文件")
+        if name == "cvgen" and filename.startswith("cvgen-linux") and not data.startswith(b"\x7fELF"):
+            raise SystemExit(f"{source} 不是 Linux 可执行文件")
+        if filename.startswith("cvgen-macos") and data[:4] not in {b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe"}:
+            raise SystemExit(f"{source} 不是 macOS 可执行文件")
         dest = out / filename
         with zipfile.ZipFile(dest, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            info = zipfile.ZipInfo(inner)
-            info.external_attr = (stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH) << 16
-            archive.writestr(info, Path(binary).read_bytes())
-            archive.writestr("使用说明.txt", NOTE)
+            _add(archive, name, data, executable=True)
+            _add(archive, "使用说明.txt", NOTE.encode("utf-8"))
         written.append(dest)
     return written
-
-
-def package_built(out: Path, binary_root: Path) -> list[Path]:
-    found = {}
-    for platform, (_filename, inner) in PACKAGES.items():
-        path = binary_root / platform / inner
-        if path.is_file():
-            found[platform] = path
-    return package(out, found)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", type=Path, default=ROOT / "tools" / "dist")
-    parser.add_argument("--binaries", type=Path, default=ROOT / "tools" / "bin")
+    parser.add_argument("--linux", type=Path, required=True)
+    parser.add_argument("--macos", type=Path, required=True)
+    parser.add_argument("--windows", type=Path, required=True)
+    parser.add_argument("--only", choices=["linux", "macos", "windows"], default="")
     args = parser.parse_args()
-    paths = package_built(args.out, args.binaries)
-    if not paths:
-        raise SystemExit("没有可打包的二进制。先运行 tools/build_nuitka.sh")
-    for path in paths:
+    os.environ["CVGEN_PACK_ONLY"] = args.only
+    binaries = {"linux": args.linux, "macos": args.macos, "windows": args.windows}
+    for path in package(args.out, binaries):
         print(path.name, path.stat().st_size)
 
 

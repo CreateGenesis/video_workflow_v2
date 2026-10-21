@@ -1,0 +1,43 @@
+services:
+  rustfs:
+    image: rustfs/rustfs:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-rustfsadmin}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-rustfsadmin}
+      RUSTFS_ADDRESS: ":9000"
+    volumes:
+      - rustfs:/data
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      CVGEN_DATA: /data
+      CVGEN_PUBLIC_BASE: ${CVGEN_PUBLIC_BASE:-http://127.0.0.1:8080}
+      RUSTFS_ENDPOINT: http://rustfs:9000
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-rustfsadmin}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-rustfsadmin}
+      AUTODL_API_TOKEN: ${AUTODL_API_TOKEN}
+      AUTODL_API_BASE: https://www.autodl.art
+      H3_WORKFLOW_ID: minimax_h3_zm_u24
+      FFMPEG_PASSTHROUGH: "0"
+    volumes:
+      - cvgen:/data
+    depends_on:
+      rustfs:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+
+volumes:
+  rustfs:
+  cvgen:

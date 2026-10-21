@@ -1,0 +1,9 @@
+[project]
+name = "cvgen"
+version = "0.1.0"
+description = "Operator for the hosted video system"
+requires-python = ">=3.11"
+dependencies = ["typer", "httpx"]
+
+[project.scripts]
+cvgen = "cli.cvgen:app"

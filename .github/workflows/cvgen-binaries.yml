@@ -5,9 +5,7 @@ on:
   push:
     branches: [main]
     paths:
-      - cli/**
-      - tools/requirements-cli.txt
-      - tools/build_nuitka.sh
+      - cvgen-cli/**
       - tools/build_release.py
       - .github/workflows/cvgen-binaries.yml
 
@@ -19,31 +17,54 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - os: ubuntu-24.04
+            platform: linux
+            target: x86_64-unknown-linux-gnu
+            binary: cvgen
+            archive: cvgen-linux-x64.zip
           - os: macos-14
             platform: macos
+            target: x86_64-apple-darwin
             binary: cvgen
+            archive: cvgen-macos.zip
           - os: windows-2022
             platform: windows
+            target: x86_64-pc-windows-msvc
             binary: cvgen.exe
+            archive: cvgen-windows-x64.zip
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          python-version: "3.12"
-      - name: Compile
+          targets: ${{ matrix.target }}
+      - name: Test and compile
+        shell: bash
+        working-directory: cvgen-cli
+        run: |
+          set -eu
+          cargo test --release --target "${{ matrix.target }}"
+          cargo build --release --target "${{ matrix.target }}"
+          test -f "target/${{ matrix.target }}/release/${{ matrix.binary }}"
+      - name: Pack
         shell: bash
         run: |
           set -eu
+          src="cvgen-cli/target/${{ matrix.target }}/release/${{ matrix.binary }}"
+          stage="$(mktemp -d)"
           if [ "${{ matrix.platform }}" = "windows" ]; then
-            PYTHON="py -3"
+            cp "$src" "$stage/cvgen.exe"
           else
-            PYTHON=python3
+            cp "$src" "$stage/cvgen"
+            chmod 755 "$stage/cvgen"
           fi
-          PYTHON="$PYTHON" sh tools/build_nuitka.sh
-          test -f "tools/bin/${{ matrix.platform }}/${{ matrix.binary }}"
-          "$PYTHON" tools/build_release.py --binaries tools/bin --out tools/dist
+          printf '%s\n' 'cvgen 操作工具' '' '这是原生可执行文件。解压后直接运行。' 'Linux / macOS：./cvgen login --base 服务地址' 'Windows：cvgen.exe login --base 服务地址' '' '网页管理员批准设备码后，这台 cvgen 才会在线。同时只能有一台在线。' > "$stage/使用说明.txt"
+          mkdir -p tools/dist
+          rm -f "tools/dist/${{ matrix.archive }}"
+          (cd "$stage" && zip -X -r "$OLDPWD/tools/dist/${{ matrix.archive }}" .)
+          rm -rf "$stage"
+          test -f "tools/dist/${{ matrix.archive }}"
       - uses: actions/upload-artifact@v4
         with:
           name: cvgen-${{ matrix.platform }}
-          path: tools/dist/cvgen-${{ matrix.platform == 'windows' && 'windows-x64' || 'macos' }}.zip
+          path: tools/dist/${{ matrix.archive }}
           if-no-files-found: error
