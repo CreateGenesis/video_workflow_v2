@@ -47,3 +47,12 @@ body {
   color: var(--foreground);
   font-family: "IBM Plex Sans", "PingFang SC", "Noto Sans SC", sans-serif;
 }
+
+.edge-flow path {
+  stroke-dasharray: 6 4;
+  animation: edge-flow 1s linear infinite;
+}
+
+@keyframes edge-flow {
+  to { stroke-dashoffset: -20; }
+}

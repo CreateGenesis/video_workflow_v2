@@ -1,0 +1,83 @@
+{
+  "schema": "cvgen.workflow/v1",
+  "name": "小说片段-雪原-15秒",
+  "description": "从《你就叫零》雪原段（server/stories.py）定型：一段原文 → 一条 15 秒、最多四拍的镜头。参考图只锁雪原空间和纱布。视频走按次计费的 autodl H3，不自动重发。",
+  "inputs": {
+    "type": "object",
+    "required": ["passage"],
+    "properties": {
+      "passage": {"type": "string", "title": "原文段落", "format": "multiline", "maxLength": 3000},
+      "inspiration": {"type": "string", "title": "情绪与手法提示", "format": "multiline", "maxLength": 500}
+    }
+  },
+  "assets": {
+    "style": "asset:style-snow-film@1",
+    "place": "asset:place-siberia-snow@1",
+    "gauze": "asset:detail-gauze-roll@1",
+    "camera": "asset:camera-one-move@1",
+    "space_ref": "asset:ref-zero-space@1",
+    "gauze_ref": "asset:ref-zero-gauze@1",
+    "adapt_prompt": "asset:prompt-novel-adapt@1",
+    "shot_schema": "asset:schema-four-beat-shot@1"
+  },
+  "defaults": {"resolution": "768p横", "duration_seconds": 15},
+  "budget": {"max_yuan": 10, "max_video_seconds": 15},
+  "nodes": [
+    {
+      "id": "adapt",
+      "kind": "llm",
+      "title": "原文 → 情绪曲线和四拍镜头",
+      "provider": "llm.default",
+      "prompt": {
+        "system": "{{assets.adapt_prompt}}",
+        "user": "原文：\n{{inputs.passage}}\n\n提示：{{inputs.inspiration}}"
+      },
+      "output_schema": "{{assets.shot_schema}}",
+      "materialize": {
+        "shot": {
+          "type": "Shot",
+          "links": [
+            {"name": "located_in", "to": "{{assets.place}}"},
+            {"name": "holds", "to": "{{assets.gauze}}", "note": "纱布必须占一个特写"},
+            {"name": "styled_as", "to": "{{assets.style}}"},
+            {"name": "shot_with", "to": "{{assets.camera}}"},
+            {"name": "references", "to": "{{assets.space_ref}}", "note": "只锁雪原，动作重新开始"},
+            {"name": "references", "to": "{{assets.gauze_ref}}", "note": "只锁纱布"}
+          ],
+          "children": {
+            "beat": {"type": "Beat", "parent_link": "contrasts_with"}
+          }
+        }
+      },
+      "repair": 2,
+      "params": {"temperature": 0.6}
+    },
+    {
+      "id": "clip",
+      "kind": "video",
+      "provider": "video.autodl-h3",
+      "for_each": "adapt.shot",
+      "prompt": "compose",
+      "resolution": "768p横",
+      "continuity": "none",
+      "timeout_seconds": 3600
+    },
+    {
+      "id": "qc",
+      "kind": "check",
+      "for_each": "clip",
+      "rules": ["duration", "resolution", "contact_sheet", "dialogue"],
+      "on_fail": "flag"
+    },
+    {
+      "id": "final",
+      "kind": "edit",
+      "after": ["qc"],
+      "clips": "clip",
+      "ops": [
+        {"op": "export", "resolution": "768p横", "format": "mp4", "name": "雪原-{{run.id}}"}
+      ]
+    }
+  ],
+  "outputs": {"video": "final.export", "clip": "clip"}
+}

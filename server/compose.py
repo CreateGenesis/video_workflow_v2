@@ -62,6 +62,9 @@ def compose(store: Store, shot_id: str, resolution: str = "768p横") -> dict:
     camera = cameras[0]["data"] if cameras else {"move": "固定镜头", "amplitude": "", "speed": ""}
     style = styles[0]["data"] if styles else {}
     place = places[0]["data"] if places else {}
+    versions = shot["data"].get("prompt_versions") or []
+    if isinstance(versions, list) and versions and versions[-1].get("text"):
+        shot = {**shot, "data": {**shot["data"], "action": versions[-1]["text"]}}
     duration = int(shot["data"].get("duration") or 5)
     if not 1 <= duration <= 15:
         raise ValueError("时长必须是 1 到 15 秒")

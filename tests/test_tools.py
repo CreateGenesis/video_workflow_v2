@@ -56,6 +56,7 @@ class ToolPackageTests(unittest.TestCase):
                 self.assertNotIn("cvgen.ps1", names)
                 self.assertNotIn("requirements-cli.txt", names)
                 self.assertFalse(any(name.endswith(".whl") for name in names))
+                self.assertIn("skills/", names)
                 self.assertIn("skills/cvgen-index.md", names)
                 self.assertIn("cvgen skill show", note)
                 self.assertIn("cvgen skill show", index)

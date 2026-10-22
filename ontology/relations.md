@@ -72,6 +72,11 @@ from: Edit
 to: Clip
 label: 时间线使用这条成片
 
+## contains
+from: Workspace
+to: Work
+label: 收纳这个作品
+
 ## belongs_to
 from: Shot
 to: Work

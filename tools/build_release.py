@@ -22,11 +22,19 @@ Windows：cvgen.exe login --base 服务地址
 
 def _add(archive: zipfile.ZipFile, name: str, payload: bytes, executable: bool = False) -> None:
     info = zipfile.ZipInfo(name)
+    info.flag_bits |= 0x800
     mode = stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH
     if not executable:
         mode = stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH
     info.external_attr = mode << 16
     archive.writestr(info, payload)
+
+
+def _add_dir(archive: zipfile.ZipFile, name: str) -> None:
+    info = zipfile.ZipInfo(name if name.endswith("/") else f"{name}/")
+    info.flag_bits |= 0x800
+    info.external_attr = (stat.S_IFDIR | 0o755) << 16
+    archive.writestr(info, b"")
 
 
 def package(out: Path, binaries: dict[str, Path]) -> list[Path]:
@@ -54,6 +62,7 @@ def package(out: Path, binaries: dict[str, Path]) -> list[Path]:
         with zipfile.ZipFile(dest, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             _add(archive, name, data, executable=True)
             _add(archive, "使用说明.txt", NOTE.encode("utf-8"))
+            _add_dir(archive, "skills")
             _add(archive, "skills/cvgen-index.md", index)
         written.append(dest)
     return written

@@ -74,12 +74,17 @@ class CapabilityTests(unittest.TestCase):
         self.admin = admin_headers(self.client)
         self.headers = approve(self.client, self.admin)
         self._restore = None
+        workspace = self.client.get("/api/workspaces", headers=self.admin).json()["items"][0]["id"]
+        self.client.post("/api/workspaces/use", headers=self.headers, json={"id": workspace})
+        work = self.client.post("/api/works", headers=self.headers, json={"title": "测试作品", "kind": "广告"})
+        self.client.post("/api/works/use", headers=self.headers, json={"id": work.json()["id"]})
 
     def tearDown(self) -> None:
         if self._restore:
             import h3_client
 
-            h3_client._request, h3_client.query, h3_client.download = self._restore
+            import server.jobs as jobs_module
+            h3_client._request, h3_client.query, h3_client.download, jobs_module.JobRunner._provider_json = self._restore
 
     def test_provider_settings_mask_key_and_override_env(self) -> None:
         os.environ["CVGEN_IMAGE_BASE"] = "http://env.example"
@@ -95,11 +100,11 @@ class CapabilityTests(unittest.TestCase):
             "capability": "image",
             "base": "http://saved.example",
             "key": "saved-secret-9999",
-            "workflow": "image-flow",
         })
         self.assertEqual(saved.status_code, 200)
         self.assertEqual(saved.json()["base"], "http://saved.example")
         self.assertEqual(saved.json()["key"], "••••9999")
+        self.assertNotIn("workflow", saved.json())
         self.assertNotIn("saved-secret-9999", json.dumps(saved.json()))
         canvas = self.client.get("/api/canvas", headers=self.headers).json()
         self.assertNotIn("saved-secret-9999", json.dumps(canvas))
@@ -108,7 +113,41 @@ class CapabilityTests(unittest.TestCase):
 
         resolved = resolve(app_module.store, "image")
         self.assertEqual(resolved["base"], "http://saved.example")
-        self.assertEqual(resolved["workflow"], "image-flow")
+        self.assertEqual(resolved["base"], "http://saved.example")
+
+    def test_probe_reports_latency_and_models_come_from_upstream(self) -> None:
+        calls = []
+
+        def fake_open(url, token="", timeout=8, method="GET"):
+            calls.append((url, token, method))
+            if url == "https://provider.test":
+                return 404, b"missing", 42
+            if url.endswith("/v1/models"):
+                if token != "stub-token":
+                    return 401, b"no", 10
+                return 200, json.dumps({"data": [{"id": "video-a"}, {"id": "video-b"}]}).encode(), 12
+            raise AssertionError(url)
+
+        import server.providers as providers
+        original = providers._open
+        providers._open = fake_open
+        self.addCleanup(lambda: setattr(providers, "_open", original))
+        os.environ["AUTODL_API_TOKEN"] = "stub-token"
+        os.environ["AUTODL_API_BASE"] = "https://provider.test"
+        probed = self.client.post("/api/provider/probe", headers=self.admin, json={"capability": "video"})
+        self.assertEqual(probed.status_code, 200, probed.text)
+        self.assertTrue(probed.json()["reachable"])
+        self.assertIn("连通正常", probed.json()["message"])
+        self.assertEqual(probed.json()["latency_ms"], 42)
+        self.assertNotIn("stub-token", json.dumps(probed.json()))
+        listed = self.client.post("/api/provider/models", headers=self.admin, json={"capability": "video"})
+        self.assertEqual(listed.status_code, 200, listed.text)
+        self.assertEqual([item["id"] for item in listed.json()["items"]], ["video-a", "video-b"])
+        applied = self.client.post("/api/provider/model", headers=self.admin, json={"capability": "video", "source": "video-a"})
+        self.assertEqual(applied.status_code, 200)
+        self.assertEqual(applied.json()["model"], "video-a")
+        self.assertNotIn("workflow", applied.json())
+        self.assertTrue(all("comfyui_workflow" not in url for url, _token, _method in calls))
 
     def test_unconfigured_image_and_music_refuse(self) -> None:
         shot = self.client.post("/api/entity", headers=self.headers, json={
@@ -123,11 +162,13 @@ class CapabilityTests(unittest.TestCase):
     def test_upload_frame_compose_image_music_mix_subtitle_and_check(self) -> None:
         self._stub()
         self.client.post("/api/settings/providers", headers=self.admin, json={
-            "capability": "image", "base": "http://image.test", "key": "image-key", "workflow": "image-flow",
+            "capability": "image", "base": "http://image.test", "key": "image-key",
         })
+        self.client.post("/api/provider/model", headers=self.admin, json={"capability": "image", "source": "image-flow"})
         self.client.post("/api/settings/providers", headers=self.admin, json={
-            "capability": "music", "base": "http://music.test", "key": "music-key", "workflow": "music-flow",
+            "capability": "music", "base": "http://music.test", "key": "music-key",
         })
+        self.client.post("/api/provider/model", headers=self.admin, json={"capability": "music", "source": "music-flow"})
         image = self.root / "product.png"
         image.write_bytes(b"\x89PNG\r\n\x1a\nproduct")
         uploaded = self.client.post(
@@ -181,6 +222,10 @@ class CapabilityTests(unittest.TestCase):
         self.assertEqual(done_image["status"], "succeeded", done_image)
         self.assertTrue(done_image["detail"]["object_key"].startswith("references/"))
         self.assertNotIn("image-key", json.dumps(done_image))
+        image_calls = [item for item in self.provider_calls if item[0].endswith("/v1/images/generations")]
+        self.assertEqual(len(image_calls), 1)
+        self.assertEqual(image_calls[0][2]["model"], "image-flow")
+        self.assertNotIn("comfyui_workflow", image_calls[0][0])
         music_job = self.client.post("/api/music", headers=self.headers, json={"detail": {"text": "产品转出"}})
         done_music = wait_job(self.client, music_job.json()["job_id"], self.headers)
         self.assertEqual(done_music["status"], "succeeded", done_music)
@@ -234,10 +279,22 @@ class CapabilityTests(unittest.TestCase):
     def _stub(self) -> None:
         import h3_client
 
-        self._restore = (h3_client._request, h3_client.query, h3_client.download)
+        import server.jobs as jobs_module
+
+        self._restore = (h3_client._request, h3_client.query, h3_client.download, jobs_module.JobRunner._provider_json)
+        self.provider_calls = []
 
         def fake_request(url, token, body=None, timeout=120):
-            return 200, {"data": {"task_id": "stub-task"}}
+            self.provider_calls.append((url, token, body))
+            return 200, {"data": {"task_id": "stub-task", "url": "http://stub.local/file"}}
+
+        calls = self.provider_calls
+
+        def fake_provider(_runner, url, key, body):
+            calls.append((url, key, body))
+            if url.endswith("/v1/images/generations"):
+                return 200, {"data": [{"b64_json": "iVBORw0KGgo="}]}, b""
+            return 200, {"data": {"url": "http://stub.local/file"}}, b""
 
         def fake_query(task_id):
             return {"status": "succeeded", "video_url": "http://stub.local/file"}
@@ -256,6 +313,7 @@ class CapabilityTests(unittest.TestCase):
         h3_client._request = fake_request
         h3_client.query = fake_query
         h3_client.download = fake_download
+        jobs_module.JobRunner._provider_json = fake_provider
 
 
 if __name__ == "__main__":

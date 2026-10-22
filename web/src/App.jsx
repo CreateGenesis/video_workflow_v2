@@ -10,20 +10,24 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-const PAGES = [
-  ["作品", "works"],
-  ["画布", "canvas"],
-  ["预览", "preview"],
+const STANDALONE = [
   ["任务", "jobs"],
-  ["技能", "skills"],
   ["工具", "tools"],
   ["管理", "admin"],
 ];
 
-async function loadView() {
-  const response = await fetch("/api/view", { headers: adminHeaders() });
-  if (!response.ok) throw new Error(await response.text());
-  return response.json();
+async function loadView(workId = "") {
+  const query = workId ? `?work_id=${encodeURIComponent(workId)}` : "";
+  const [canvasResponse, workspaceResponse, workResponse] = await Promise.all([
+    fetch(`/api/view${query}`, { headers: adminHeaders() }),
+    fetch("/api/workspaces", { headers: adminHeaders() }),
+    fetch("/api/works", { headers: adminHeaders() }),
+  ]);
+  if (!canvasResponse.ok) throw new Error(await canvasResponse.text());
+  const canvas = await canvasResponse.json();
+  const workspaces = workspaceResponse.ok ? (await workspaceResponse.json()).items || [] : canvas.workspaces;
+  const works = workResponse.ok ? (await workResponse.json()).items || [] : [];
+  return { ...canvas, workspaces, works };
 }
 
 function adminHeaders() {
@@ -32,8 +36,9 @@ function adminHeaders() {
 }
 
 export default function App() {
-  const [page, setPage] = useState("works");
-  const [view, setView] = useState({ nodes: [], edges: [], jobs: [], activity: [], settings: {} });
+  const [page, setPage] = useState("work");
+  const [focus, setFocus] = useState("");
+  const [view, setView] = useState({ nodes: [], edges: [], jobs: [], workspaces: [], works: [], selected: {}, settings: {} });
   const [error, setError] = useState("");
   const [session, setSession] = useState("checking");
   const [adminReady, setAdminReady] = useState(false);
@@ -71,8 +76,9 @@ export default function App() {
 
   useEffect(() => {
     if (session !== "in") return undefined;
-    loadView().then(setView).catch((err) => setError(String(err)));
-    const timer = setInterval(() => loadView().then(setView).catch(() => {}), 5000);
+    const workId = window.sessionStorage.getItem("cvgen_work") || "";
+    loadView(workId).then(setView).catch((err) => setError(String(err)));
+    const timer = setInterval(() => loadView(window.sessionStorage.getItem("cvgen_work") || "").then(setView).catch(() => {}), 5000);
     return () => clearInterval(timer);
   }, [session]);
 
@@ -105,10 +111,11 @@ export default function App() {
         <div className="px-5 py-6">
           <p className="text-xs tracking-[0.2em] uppercase opacity-70">观察</p>
           <h1 className="mt-1 text-2xl font-semibold">cvgen</h1>
-          <p className="mt-2 text-sm opacity-80">只读观察。生成和剪辑由服务执行。</p>
+          <p className="mt-2 text-sm opacity-80">按作品查看。关系和生成由服务执行。</p>
         </div>
+        <WorkspaceNav view={view} page={page} onOpen={() => setPage("work")} onRefresh={(workId) => loadView(workId || "").then(setView)} />
         <nav className="flex gap-1 overflow-x-auto px-3 pb-4 md:block">
-          {PAGES.map(([label, value]) => (
+          {STANDALONE.map(([label, value]) => (
             <Button
               key={value}
               variant={page === value ? "secondary" : "ghost"}
@@ -125,11 +132,8 @@ export default function App() {
       </aside>
       <main className="p-5 md:p-8">
         {error && <p className="mb-4 text-sm text-red-700">{error}</p>}
-        {page === "works" && <Works view={view} />}
-        {page === "canvas" && <Canvas view={view} />}
-        {page === "preview" && <Preview view={view} />}
-        {page === "jobs" && <Jobs view={view} />}
-        {page === "skills" && <Skills />}
+        {page === "work" && <WorkSpace view={view} focus={focus} onRefresh={() => loadView(window.sessionStorage.getItem("cvgen_work") || "").then(setView)} />}
+        {page === "jobs" && <Jobs view={view} onOpen={(id) => { setFocus(id); setPage("work"); }} />}
         {page === "tools" && <Tools />}
         {page === "admin" && <Admin view={view} onLogout={() => setSession("out")} />}
       </main>
@@ -137,142 +141,214 @@ export default function App() {
   );
 }
 
-function Works({ view }) {
-  const shots = view.nodes.filter((node) => node.type === "Shot");
+function WorkspaceNav({ view, page, onOpen, onRefresh }) {
+  const [title, setTitle] = useState("");
+  const [workTitle, setWorkTitle] = useState("");
+  const selectedWorkspace = view.selected?.workspace_id;
+  const selectedWork = view.selected?.work_id;
+
+  async function post(path, body) {
+    const response = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...adminHeaders() },
+      body: JSON.stringify(body),
+    });
+    const data = await response.json().catch(() => ({}));
+    const workId = data.work_id || (path === "/api/works" ? data.id : "");
+    if (workId) window.sessionStorage.setItem("cvgen_work", workId);
+    onRefresh(workId || window.sessionStorage.getItem("cvgen_work") || "");
+  }
+
   return (
-    <section className="space-y-4">
-      <header>
-        <h2 className="text-xl font-semibold">作品里的镜头</h2>
-        <p className="text-sm text-muted-foreground">agent 用 cvgen 建好后会出现在这里。</p>
-      </header>
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {shots.map((shot) => (
-          <Card key={shot.id}>
-            {shot.preview_url && <img className="h-40 w-full rounded-t-xl object-cover" src={shot.preview_url} alt="" />}
-            <CardHeader>
-              <CardTitle>{shot.title}</CardTitle>
-              <CardDescription>{shot.summary}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Badge status={shot.status}>{shot.status}</Badge>
-              {shot.status === "失败" && <p className="mt-3 text-sm text-muted-foreground">服务已执行，片子没有入库。原因在任务页。</p>}
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-      {shots.length === 0 && <Empty>还没有镜头。</Empty>}
-    </section>
+    <div className="space-y-3 px-3 pb-4">
+      <p className="px-2 text-xs uppercase tracking-[0.16em] opacity-70">工作区</p>
+      {(view.workspaces || []).map((item) => (
+        <div key={item.id} className="flex gap-1">
+          <Button variant={item.id === selectedWorkspace ? "secondary" : "ghost"} className="flex-1 justify-start" onClick={() => post("/api/workspaces/use", { id: item.id })}>
+            {item.title}
+          </Button>
+          <Button variant="ghost" onClick={() => { const next = window.prompt("工作区名称", item.title); if (next) post(`/api/workspaces/${item.id}/rename`, { title: next }); }}>改名</Button>
+        </div>
+      ))}
+      <form className="flex gap-2" onSubmit={(event) => { event.preventDefault(); post("/api/workspaces", { title }); setTitle(""); }}>
+        <Input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="新工作区" />
+        <Button type="submit" variant="secondary">新建</Button>
+      </form>
+      <p className="px-2 text-xs uppercase tracking-[0.16em] opacity-70">作品</p>
+      {(view.works || []).map((item) => (
+        <Button key={item.id} variant={page === "work" && item.id === selectedWork ? "secondary" : "ghost"} className="w-full justify-start" onClick={async () => { await post("/api/works/use", { id: item.id }); onOpen(); }}>
+          {item.title}
+        </Button>
+      ))}
+      <form className="flex gap-2" onSubmit={(event) => { event.preventDefault(); post("/api/works", { title: workTitle, kind: "广告" }); setWorkTitle(""); }}>
+        <Input value={workTitle} onChange={(event) => setWorkTitle(event.target.value)} placeholder="新作品" />
+        <Button type="submit" variant="secondary">新建</Button>
+      </form>
+    </div>
   );
 }
 
-function Canvas({ view }) {
-  const nodes = useMemo(() => view.nodes.map((node, index) => ({
+function EntityNode({ data }) {
+  return (
+    <div className="w-44 rounded-lg border bg-card p-2 text-xs shadow-sm">
+      {data.preview ? <img src={data.preview} alt="缩略图" className="mb-2 h-16 w-full rounded object-cover" /> : null}
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate font-medium">{data.title}</span>
+        <Badge status={data.status}>{data.status}</Badge>
+      </div>
+      <p className="mt-1 text-muted-foreground">{data.type}</p>
+    </div>
+  );
+}
+
+const nodeTypes = { entity: EntityNode };
+
+function WorkSpace({ view, focus, onRefresh }) {
+  const types = [...new Set(view.nodes.map((node) => node.type))];
+  const [shown, setShown] = useState([]);
+  useEffect(() => {
+    setShown((current) => current.length ? current : types);
+  }, [view.nodes]);
+  const [media, setMedia] = useState(null);
+  const [prompt, setPrompt] = useState(null);
+  const active = new Set(view.jobs.filter((job) => job.status === "queued" || job.status === "running").map((job) => job.target_id));
+  const visible = new Set(view.nodes.filter((node) => shown.includes(node.type)).map((node) => node.id));
+  const nodes = useMemo(() => view.nodes.filter((node) => visible.has(node.id)).map((node, index) => ({
     id: node.id,
-    position: { x: (index % 4) * 240, y: Math.floor(index / 4) * 150 },
-    data: { label: `${node.title}\n${node.status}` },
-  })), [view.nodes]);
-  const edges = view.edges.map((edge) => ({
+    type: "entity",
+    selected: node.id === focus,
+    position: node.position?.x !== undefined ? node.position : { x: (index % 4) * 240, y: Math.floor(index / 4) * 170 },
+    data: { title: node.title, status: node.status, type: node.type, preview: node.preview_url },
+  })), [view.nodes, focus, shown]);
+  const edges = view.edges.filter((edge) => visible.has(edge.source_id) && visible.has(edge.target_id)).map((edge) => ({
     id: edge.id,
     source: edge.source_id,
     target: edge.target_id,
     label: edge.plain,
+    className: active.has(edge.source_id) || active.has(edge.target_id) ? "edge-flow" : "",
+    animated: active.has(edge.source_id) || active.has(edge.target_id),
   }));
-  return (
-    <section className="space-y-4">
-      <header>
-        <h2 className="text-xl font-semibold">本体画布</h2>
-        <p className="text-sm text-muted-foreground">点一条边，看它在说什么。这里不能改关系。</p>
-      </header>
-      <div className="h-[70vh] overflow-hidden rounded-xl border bg-card">
-        <ReactFlow nodes={nodes} edges={edges} fitView nodesDraggable={false} nodesConnectable={false} elementsSelectable>
-          <Background />
-          <Controls showInteractive={false} />
-        </ReactFlow>
-      </div>
-      <ul className="space-y-1 text-sm text-muted-foreground">
-        {view.edges.map((edge) => <li key={edge.id}>{edge.plain}</li>)}
-      </ul>
-    </section>
-  );
-}
+  const previews = view.nodes.filter((node) => node.preview_url);
 
-function Preview({ view }) {
-  const media = view.nodes.filter((node) => node.preview_url);
-  const latest = view.activity[0];
+  async function savePositions(_event, node) {
+    const positions = Object.fromEntries(nodes.map((item) => [item.id, item.id === node.id ? node.position : item.position]));
+    await fetch("/api/layout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...adminHeaders() },
+      body: JSON.stringify({ positions }),
+    });
+  }
+
+  async function tidy() {
+    await fetch("/api/layout/tidy", { method: "POST", headers: adminHeaders() });
+    onRefresh();
+  }
+
+  async function openPrompt(id) {
+    const data = await fetch(`/api/shots/${id}/prompt`, { headers: adminHeaders() }).then((response) => response.json());
+    setPrompt({ id, versions: data.versions || [], text: data.versions?.at(-1)?.text || "" });
+  }
+
+  if (!view.selected?.work_id) return <Empty>先在侧栏选择工作区和作品。</Empty>;
   return (
-    <section className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-      <div className="space-y-4">
-        <h2 className="text-xl font-semibold">画面</h2>
-        {media.map((node) => (
+    <section className="grid gap-4 xl:grid-cols-[1.4fr_0.6fr]">
+      <div className="space-y-3">
+        <header className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-semibold">作品画布</h2>
+            <p className="text-sm text-muted-foreground">可以拖动和筛选。拖动不改变关系。</p>
+          </div>
+          <Button type="button" variant="outline" onClick={tidy}>整理布局</Button>
+        </header>
+        <div className="flex flex-wrap gap-2">
+          {types.map((type) => (
+            <Button key={type} type="button" size="sm" variant={shown.includes(type) ? "secondary" : "outline"} onClick={() => setShown((current) => current.includes(type) ? current.filter((item) => item !== type) : [...current, type])}>
+              {type}
+            </Button>
+          ))}
+        </div>
+        <div className="h-[68vh] overflow-hidden rounded-xl border bg-card">
+          <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} fitView nodesConnectable={false} onNodeDragStop={savePositions}>
+            <Background />
+            <Controls showInteractive={false} />
+          </ReactFlow>
+        </div>
+      </div>
+      <div className="space-y-3">
+        <h2 className="text-xl font-semibold">预览</h2>
+        {previews.map((node) => (
           <Card key={node.id}>
-            <img className="max-h-80 w-full rounded-t-xl object-contain bg-muted" src={node.preview_url} alt={node.title} />
+            <button type="button" className="block w-full" onClick={() => setMedia(node)}>
+              <img className="max-h-56 w-full rounded-t-xl bg-muted object-contain" src={node.preview_url} alt={node.title} />
+            </button>
             <CardHeader>
-              <CardTitle>{node.title}</CardTitle>
-              <CardDescription>{node.summary}</CardDescription>
+              <CardTitle className="flex items-center justify-between">{node.title}<Badge status={node.status}>{node.status}</Badge></CardTitle>
+              <CardDescription>{node.type} · {node.summary}</CardDescription>
             </CardHeader>
+            {node.type === "Shot" && <CardContent><Button type="button" variant="outline" onClick={() => openPrompt(node.id)}>提示词</Button></CardContent>}
+            {node.type === "Reference" && <CardContent><Button type="button" variant="outline" onClick={() => fetch(`/api/images/${node.id}/redraw`, { method: "POST", headers: adminHeaders() }).then(onRefresh)}>重新抽卡</Button></CardContent>}
           </Card>
         ))}
-        {media.length === 0 && <Empty>还没有可预览的文件。</Empty>}
+        {previews.length === 0 && <Empty>这个作品还没有可预览的文件。</Empty>}
       </div>
-      <Card>
-        <CardHeader>
-          <CardTitle>agent 最近一次看到的返回</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <pre className="whitespace-pre-wrap font-mono text-xs">{latest ? JSON.stringify(latest, null, 2) : "还没有操作。"}</pre>
-        </CardContent>
-      </Card>
-    </section>
-  );
-}
-
-function Jobs({ view }) {
-  return (
-    <section className="space-y-4">
-      <h2 className="text-xl font-semibold">任务和花费</h2>
-      {view.jobs.map((job) => (
-        <Card key={job.id}>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">{job.kind} <Badge>{job.status}</Badge></CardTitle>
-            <CardDescription>{job.detail.error || job.detail.draft || job.id}</CardDescription>
-          </CardHeader>
+      {media && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/80 p-6" role="dialog" aria-label="全屏" onClick={() => setMedia(null)}>
+          <div className="max-h-full max-w-5xl" onClick={(event) => event.stopPropagation()}>
+            {String(media.preview_url).includes(".mp4") || media.type === "Clip" ? (
+              <video className="max-h-[80vh] w-full" src={media.preview_url} controls autoPlay />
+            ) : <img className="max-h-[80vh] w-full object-contain" src={media.preview_url} alt={media.title} />}
+            <Button className="mt-3" type="button" onClick={() => setMedia(null)}>关闭</Button>
+          </div>
+        </div>
+      )}
+      {prompt && (
+        <Card className="xl:col-span-2">
+          <CardHeader><CardTitle>提示词</CardTitle><CardDescription>按时间保留。恢复会再写入一版。</CardDescription></CardHeader>
           <CardContent className="space-y-3">
-            {job.detail.estimate_yuan ? <p className="text-sm">估算花费 {job.detail.estimate_yuan} 元，不是已核对账单。</p> : null}
-            {job.detail.sheet_key_url && <img className="w-full rounded-md border" src={job.detail.sheet_key_url} alt="接触表" />}
+            <textarea className="min-h-24 w-full rounded-md border bg-background p-3" value={prompt.text} onChange={(event) => setPrompt({ ...prompt, text: event.target.value })} />
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" onClick={() => fetch(`/api/shots/${prompt.id}/prompt`, { method: "POST", headers: { "Content-Type": "application/json", ...adminHeaders() }, body: JSON.stringify({ text: prompt.text }) }).then(() => openPrompt(prompt.id))}>保存</Button>
+              {prompt.versions.map((item, index) => (
+                <Button key={`${item.at}-${index}`} type="button" variant="outline" onClick={() => fetch(`/api/shots/${prompt.id}/prompt/restore`, { method: "POST", headers: { "Content-Type": "application/json", ...adminHeaders() }, body: JSON.stringify({ index }) }).then(() => openPrompt(prompt.id))}>
+                  {item.at?.slice(11, 19) || index}
+                </Button>
+              ))}
+            </div>
           </CardContent>
         </Card>
-      ))}
-      {view.jobs.length === 0 && <Empty>还没有托管任务。</Empty>}
+      )}
     </section>
   );
 }
 
-function Skills() {
-  const [names, setNames] = useState([]);
-  const [text, setText] = useState("点一个技能，看 agent 读到的同一份正文。");
-  useEffect(() => {
-    fetch("/api/skills", { headers: adminHeaders() }).then((response) => response.json()).then((data) => setNames(data.items || []));
-  }, []);
-  async function open(name) {
-    const data = await fetch(`/api/skills/${name}`, { headers: adminHeaders() }).then((response) => response.json());
-    setText(data.text || "");
+function Jobs({ view, onOpen }) {
+  async function retry(id) {
+    await fetch(`/api/jobs/${id}/retry`, { method: "POST", headers: adminHeaders() });
   }
   return (
     <section className="space-y-4">
-      <header>
-        <h2 className="text-xl font-semibold">技能</h2>
-        <p className="text-sm text-muted-foreground">这些正文只写 cvgen 操作。提交、轮询和入库由服务完成。</p>
-      </header>
-      <div className="flex flex-wrap gap-2">
-        {names.map((name) => (
-          <Button key={name} variant="outline" size="sm" type="button" onClick={() => open(name)}>{name}</Button>
-        ))}
-      </div>
-      <Card>
-        <CardContent className="pt-5">
-          <pre className="whitespace-pre-wrap font-mono text-xs">{text}</pre>
-        </CardContent>
-      </Card>
+      <h2 className="text-xl font-semibold">任务</h2>
+      {view.jobs.map((job) => {
+        const retryable = job.status === "failed" || (job.status === "unknown" && !job.detail.provider_task);
+        return (
+          <Card key={job.id}>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">{job.kind} <Badge status={job.status}>{job.status}</Badge></CardTitle>
+              <CardDescription>{job.detail.error || job.id}</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {job.detail.prompt && <pre className="whitespace-pre-wrap rounded-md bg-muted p-3 text-xs">{job.detail.prompt}</pre>}
+              {job.detail.estimate_yuan ? <p className="text-sm">估算花费 {job.detail.estimate_yuan} 元，不是已核对账单。</p> : null}
+              {job.detail.sheet_key_url && <img className="w-full rounded-md border" src={job.detail.sheet_key_url} alt="接触表" />}
+              <div className="flex gap-2">
+                {retryable && <Button type="button" onClick={() => retry(job.id)}>重试</Button>}
+                {job.target_id && <Button type="button" variant="outline" onClick={() => onOpen(job.target_id)}>打开画布</Button>}
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })}
+      {view.jobs.length === 0 && <Empty>还没有托管任务。</Empty>}
     </section>
   );
 }
@@ -287,7 +363,7 @@ function Tools() {
     <section className="space-y-4">
       <header>
         <h2 className="text-xl font-semibold">下载 cvgen</h2>
-        <p className="text-sm text-muted-foreground">压缩包里有可执行文件、使用说明和技能索引。先读索引，登录后再运行 cvgen skill show 读取正文。Linux 和 macOS 运行 ./cvgen，Windows 运行 cvgen.exe。先运行 cvgen login，再由管理员批准。同时只能有一台在线。</p>
+        <p className="text-sm text-muted-foreground">压缩包里有可执行文件和使用说明。Linux 和 macOS 运行 ./cvgen，Windows 运行 cvgen.exe。先运行 cvgen login，再由管理员批准。同时只能有一台在线。</p>
       </header>
       <div className="grid gap-4 md:grid-cols-3">
         {items.map((item) => (
@@ -328,6 +404,10 @@ function Admin({ view, onLogin, onLogout }) {
   const [mode, setMode] = useState(view.settings?.admin_ready ? "login" : "setup");
   const [devices, setDevices] = useState([]);
   const [code, setCode] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [nextPassword, setNextPassword] = useState("");
+  const [recovery, setRecovery] = useState("");
+  const [passwordMessage, setPasswordMessage] = useState("");
 
   useEffect(() => {
     if (view.settings?.admin_ready) setMode("login");
@@ -385,6 +465,46 @@ function Admin({ view, onLogin, onLogout }) {
     refresh();
   }
 
+  async function resetLoggedOut(event) {
+    event.preventDefault();
+    const response = await fetch("/api/admin/reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ recovery, next_password: nextPassword }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      setPasswordMessage(data.detail || "没有重设");
+      return;
+    }
+    window.sessionStorage.setItem("cvgen_admin", data.token);
+    setToken(data.token);
+    setRecovery("");
+    setNextPassword("");
+    setPassword("");
+    setPasswordMessage("");
+    if (onLogin) onLogin();
+  }
+
+  async function resetLoggedIn(event) {
+    event.preventDefault();
+    const response = await fetch("/api/admin/password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...adminHeaders() },
+      body: JSON.stringify({ password: currentPassword, next_password: nextPassword }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      setPasswordMessage(data.detail || "没有重设");
+      return;
+    }
+    window.sessionStorage.setItem("cvgen_admin", data.token);
+    setToken(data.token);
+    setCurrentPassword("");
+    setNextPassword("");
+    setPasswordMessage("密码已重设。当前页面仍保持登录。");
+  }
+
   function logout() {
     fetch("/api/admin/logout", { method: "POST", headers: adminHeaders() });
     window.sessionStorage.removeItem("cvgen_admin");
@@ -404,8 +524,24 @@ function Admin({ view, onLogin, onLogout }) {
             <TabsList>
               <TabsTrigger value="login">登录</TabsTrigger>
               <TabsTrigger value="setup">初次设置</TabsTrigger>
+              <TabsTrigger value="reset">重设密码</TabsTrigger>
             </TabsList>
-            <TabsContent value={mode}>
+            <TabsContent value="reset">
+              <form className="mt-4 space-y-3" onSubmit={resetLoggedOut}>
+                <div className="space-y-1">
+                  <Label htmlFor="recovery">恢复口令</Label>
+                  <Input id="recovery" type="password" value={recovery} onChange={(event) => setRecovery(event.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="reset-next">新密码</Label>
+                  <Input id="reset-next" type="password" value={nextPassword} onChange={(event) => setNextPassword(event.target.value)} />
+                </div>
+                <Button type="submit">重设并登录</Button>
+                <p className="text-sm text-muted-foreground">恢复口令来自服务环境，只用于忘记登录密码。新密码至少 8 位。旧登录会失效。</p>
+                {passwordMessage && <p className="text-sm text-muted-foreground">{passwordMessage}</p>}
+              </form>
+            </TabsContent>
+            <TabsContent value={mode === "reset" ? "login" : mode}>
               <form className="mt-4 space-y-3" onSubmit={submit}>
                 <div className="space-y-1">
                   <Label htmlFor="admin-name">账号</Label>
@@ -463,6 +599,26 @@ function Admin({ view, onLogin, onLogout }) {
         ))}
         {devices.length === 0 && <Empty>还没有申请授权的 cvgen。</Empty>}
       </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>重设密码</CardTitle>
+          <CardDescription>用当前密码换成新密码。保存后这一次登录仍有效，其他旧登录失效。新密码至少 8 位。</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]" onSubmit={resetLoggedIn}>
+            <div className="space-y-1">
+              <Label htmlFor="current-pass">当前密码</Label>
+              <Input id="current-pass" type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="next-pass">新密码</Label>
+              <Input id="next-pass" type="password" value={nextPassword} onChange={(event) => setNextPassword(event.target.value)} />
+            </div>
+            <Button className="self-end" type="submit">重设密码</Button>
+          </form>
+          {passwordMessage && <p className="mt-3 text-sm text-muted-foreground">{passwordMessage}</p>}
+        </CardContent>
+      </Card>
       <Separator />
       <p className="text-sm text-muted-foreground">ffmpeg 透传现在是{view.settings.ffmpeg_passthrough ? "打开" : "关闭"}。开关只能由已授权的 cvgen 改。</p>
       <PlatformBind />
@@ -480,11 +636,14 @@ const PROVIDERS = [
 function ProviderSettings() {
   const [items, setItems] = useState([]);
   const [forms, setForms] = useState({
-    video: { base: "", key: "", workflow: "" },
-    image: { base: "", key: "", workflow: "" },
-    music: { base: "", key: "", workflow: "" },
+    video: { base: "", key: "" },
+    image: { base: "", key: "" },
+    music: { base: "", key: "" },
   });
   const [message, setMessage] = useState("");
+  const [probes, setProbes] = useState({});
+  const [models, setModels] = useState({});
+  const [picked, setPicked] = useState({});
 
   async function refresh() {
     const response = await fetch("/api/settings/providers", { headers: adminHeaders() });
@@ -497,7 +656,6 @@ function ProviderSettings() {
         next[item.capability] = {
           ...next[item.capability],
           base: item.base || "",
-          workflow: item.workflow || "",
           key: "",
         };
       }
@@ -513,13 +671,60 @@ function ProviderSettings() {
     setForms((current) => ({ ...current, [capability]: { ...current[capability], [field]: value } }));
   }
 
+  async function probe(capability) {
+    setProbes((current) => ({ ...current, [capability]: { message: "正在检测连通…" } }));
+    const response = await fetch("/api/provider/probe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...adminHeaders() },
+      body: JSON.stringify({ capability }),
+    });
+    const data = await response.json();
+    setProbes((current) => ({
+      ...current,
+      [capability]: response.ok ? data : { reachable: false, message: data.detail || "无法连通" },
+    }));
+  }
+
+  async function loadModels(capability) {
+    setMessage("正在获取上游模型…");
+    const response = await fetch("/api/provider/models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...adminHeaders() },
+      body: JSON.stringify({ capability }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      setMessage(data.detail || "模型列表没有返回");
+      return;
+    }
+    setModels((current) => ({ ...current, [capability]: data.items || [] }));
+    setPicked((current) => ({ ...current, [capability]: data.items?.[0]?.id || "" }));
+    setMessage(data.items?.length ? `已获取 ${data.items.length} 个模型` : "上游没有返回模型");
+  }
+
+  async function applyModel(capability) {
+    const source = picked[capability];
+    if (!source) {
+      setMessage("先获取上游模型");
+      return;
+    }
+    const response = await fetch("/api/provider/model", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...adminHeaders() },
+      body: JSON.stringify({ capability, source }),
+    });
+    const data = await response.json();
+    setMessage(response.ok ? `已选模型 ${data.model}` : data.detail || "没有应用");
+    if (response.ok) refresh();
+  }
+
   async function save(event, capability) {
     event.preventDefault();
     const form = forms[capability];
     const response = await fetch("/api/settings/providers", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...adminHeaders() },
-      body: JSON.stringify({ capability, base: form.base, key: form.key, workflow: form.workflow }),
+      body: JSON.stringify({ capability, base: form.base, key: form.key }),
     });
     const data = await response.json();
     setMessage(response.ok ? `${capability} 已保存，密钥只留在服务端` : data.detail || "没有保存");
@@ -543,7 +748,7 @@ function ProviderSettings() {
                 <p className="font-medium">{label}</p>
                 <Badge status={item.configured ? "在线" : "离线"}>{item.configured ? "已配置" : "未配置"}{item.key ? ` ${item.key}` : ""}</Badge>
               </div>
-              <div className="grid gap-3 md:grid-cols-3">
+              <div className="grid gap-3 md:grid-cols-2">
                 <div className="space-y-1">
                   <Label htmlFor={`${capability}-base`}>地址</Label>
                   <Input id={`${capability}-base`} value={form.base} onChange={(event) => update(capability, "base", event.target.value)} />
@@ -552,12 +757,22 @@ function ProviderSettings() {
                   <Label htmlFor={`${capability}-key`}>访问密钥</Label>
                   <Input id={`${capability}-key`} type="password" value={form.key} onChange={(event) => update(capability, "key", event.target.value)} placeholder={item.key || "未配置"} />
                 </div>
-                <div className="space-y-1">
-                  <Label htmlFor={`${capability}-workflow`}>工作流编号</Label>
-                  <Input id={`${capability}-workflow`} value={form.workflow} onChange={(event) => update(capability, "workflow", event.target.value)} />
-                </div>
               </div>
               <Button className="w-fit" type="submit">保存{label}</Button>
+              <p className="text-sm">已选模型：{item.model || "还没有选择"}</p>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="outline" onClick={() => probe(capability)}>检测连通</Button>
+              <Button type="button" variant="outline" onClick={() => loadModels(capability)}>获取上游模型</Button>
+            </div>
+            {probes[capability] && <p className="text-base font-medium">{probes[capability].message}</p>}
+            {(models[capability] || []).length > 0 && (
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <select className="h-9 rounded-md border bg-background px-3" value={picked[capability] || ""} onChange={(event) => setPicked((current) => ({ ...current, [capability]: event.target.value }))}>
+                  {(models[capability] || []).map((model) => <option key={model.id} value={model.id}>{model.id}</option>)}
+                </select>
+                <Button type="button" onClick={() => applyModel(capability)}>应用</Button>
+              </div>
+            )}
             </form>
           );
         })}

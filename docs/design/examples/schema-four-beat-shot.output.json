@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "四拍镜头（大模型输出）",
+  "description": "素材 asset:schema-four-beat-shot@1 的内容。为兼容三种协议的严格模式：所有字段都列进 required，additionalProperties 一律 false，可选值用 null。范围约束（字数、条数、秒数）由服务端二次校验兜底。台词写在对应拍的 action 里，用中文引号，不单独成字段。",
+  "type": "object",
+  "required": ["shot"],
+  "additionalProperties": false,
+  "properties": {
+    "shot": {
+      "type": "object",
+      "required": ["title", "size", "angle", "action", "duration", "sound", "paragraphs", "beat"],
+      "additionalProperties": false,
+      "properties": {
+        "title": {"type": "string", "maxLength": 20},
+        "size": {"type": "string", "description": "整条镜头的主景别"},
+        "angle": {"type": "string"},
+        "action": {"type": "string", "description": "这一段在演什么，一句话"},
+        "duration": {"type": "integer", "minimum": 1, "maximum": 15},
+        "sound": {"type": ["string", "null"], "description": "只写动作发出的声音"},
+        "paragraphs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "required": ["size", "angle", "motion", "action", "details", "reverse"],
+            "additionalProperties": false,
+            "properties": {
+              "size": {"type": "string"},
+              "angle": {"type": "string"},
+              "motion": {"type": "string", "description": "一种运动，或“固定镜头”"},
+              "action": {"type": "string", "description": "一个主动作；台词用中文引号写在这里"},
+              "details": {"type": ["string", "null"], "description": "最多两个细节"},
+              "reverse": {"type": "string", "description": "这一拍最可能偷的懒"}
+            }
+          }
+        },
+        "beat": {
+          "type": "object",
+          "required": ["title", "curve", "turn"],
+          "additionalProperties": false,
+          "properties": {
+            "title": {"type": "string"},
+            "curve": {"type": "string", "description": "情绪曲线"},
+            "turn": {"type": ["string", "null"], "description": "反转点"}
+          }
+        }
+      }
+    }
+  }
+}

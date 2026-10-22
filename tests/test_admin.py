@@ -82,6 +82,33 @@ class AdminSeatTests(unittest.TestCase):
         self.assertEqual(approved.status_code, 200)
         self.assertEqual(self.client.get("/api/ontology", headers={"Authorization": "Bearer kept-token"}).status_code, 401)
 
+    def test_password_can_be_reset_from_session_or_recovery(self) -> None:
+        setup = self.client.post("/api/admin/setup", json={"username": "root", "password": "correct-horse"})
+        headers = {"Authorization": f"Bearer {setup.json()['token']}"}
+        missing = self.client.post("/api/admin/reset", json={"recovery": "server-reset", "next_password": "brand-new-pass"})
+        self.assertEqual(missing.status_code, 403)
+        os.environ["CVGEN_ADMIN_PASSWORD"] = "server-reset"
+        try:
+            wrong = self.client.post("/api/admin/reset", json={"recovery": "wrong-reset", "next_password": "brand-new-pass"})
+            self.assertEqual(wrong.status_code, 401)
+            short = self.client.post("/api/admin/reset", json={"recovery": "server-reset", "next_password": "short"})
+            self.assertEqual(short.status_code, 400)
+            reset = self.client.post("/api/admin/reset", json={"recovery": "server-reset", "next_password": "brand-new-pass"})
+            self.assertEqual(reset.status_code, 200)
+            self.assertEqual(self.client.get("/api/admin/session", headers=headers).status_code, 401)
+            old = self.client.post("/api/admin/login", json={"username": "root", "password": "correct-horse"})
+            self.assertEqual(old.status_code, 401)
+            logged = self.client.post("/api/admin/login", json={"username": "root", "password": "brand-new-pass"})
+            self.assertEqual(logged.status_code, 200)
+            fresh = {"Authorization": f"Bearer {logged.json()['token']}"}
+            changed = self.client.post("/api/admin/password", headers=fresh, json={"password": "brand-new-pass", "next_password": "third-password"})
+            self.assertEqual(changed.status_code, 200)
+            self.assertEqual(self.client.get("/api/admin/session", headers=fresh).status_code, 401)
+            again = self.client.post("/api/admin/login", json={"username": "root", "password": "third-password"})
+            self.assertEqual(again.status_code, 200)
+        finally:
+            os.environ.pop("CVGEN_ADMIN_PASSWORD", None)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -100,7 +100,7 @@ class StoryApiTests(unittest.TestCase):
         shot = next(node for node in canvas["nodes"] if node["id"] == shot_id)
         self.assertEqual(shot["status"], "未生成")
         self.assertGreaterEqual(len(canvas["edges"]), 8)
-        self.assertIn("cvgen-zero", canvas["skills"])
+        self.assertNotIn("skills", canvas)
 
         extra = self.client.post(
             "/api/entity",

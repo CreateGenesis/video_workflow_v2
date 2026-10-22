@@ -103,6 +103,10 @@ class AdLoopTests(unittest.TestCase):
         self.assertEqual(approved.status_code, 200)
         token = self.client.get(f"/api/device/{started['code']}").json()["token"]
         self.headers = {"Authorization": f"Bearer {token}"}
+        workspace = self.client.get("/api/workspaces", headers=self.admin).json()["items"][0]["id"]
+        self.client.post("/api/workspaces/use", headers=self.headers, json={"id": workspace})
+        work = self.client.post("/api/works", headers=self.headers, json={"title": "广告闭环", "kind": "广告"})
+        self.client.post("/api/works/use", headers=self.headers, json={"id": work.json()["id"]})
         self.video = self.root / "provider.mp4"
         tiny_video(self.video, "green", 1.2)
         self.audio = self.root / "voice.wav"
@@ -436,7 +440,7 @@ class LiveCliTests(unittest.TestCase):
             env["CVGEN_DATA"] = str(root)
             env["NO_PROXY"] = "127.0.0.1,localhost"
             env["no_proxy"] = "127.0.0.1,localhost"
-            help_text = _run([os.fspath(ROOT / ".venv/bin/python"), "-m", "cli.cvgen", "--help"], env)
+            help_text = _run([os.fspath(ROOT / ".venv/bin/python"), "-m", "cli.cvgen", "help"], env)
             for phrase in ("batch", "style", "reference", "job", "edit"):
                 self.assertIn(phrase, help_text)
             binary = _ensure_binary()
@@ -451,7 +455,10 @@ class LiveCliTests(unittest.TestCase):
                 cwd=ROOT, env=env, capture_output=True, text=True,
             )
             self.assertEqual(probe.returncode, 0, probe.stderr + probe.stdout)
-            work = _cli(env, "work", "纱布广告", "广告", "产品开场")
+            spaces = _cli(env, "workspace", "list")
+            _cli(env, "workspace", "use", spaces["items"][0]["id"])
+            work = _cli(env, "work", "add", "纱布广告", "广告", "产品开场")
+            _cli(env, "work", "use", work["id"])
             subject = _cli(env, "entity", "add", "Subject", json.dumps({"title": "纱布", "summary": "产品"}, ensure_ascii=False))
             appearance = _cli(env, "entity", "add", "Appearance", json.dumps({"title": "外观", "material": "棉"}, ensure_ascii=False))
             _cli(env, "link", "has_appearance", subject["id"], appearance["id"])
@@ -504,7 +511,9 @@ class LiveCliTests(unittest.TestCase):
             tiny_video(other, "navy", 1.0)
             other_key = app_module.storage.put("clips", "b.mp4", other.read_bytes(), "video/mp4")
             other_clip = app_module.store.add_entity("Clip", {"title": "第二条"}, other_key)
-            joined = _cli(env, "job", "wait", _cli(env, "edit", "join", clip_id, other_clip["id"], "--fade", "2")["job_id"])
+            joined_start = _cli(env, "edit", "join", clip_id, other_clip["id"], "--fade", "2")
+            joined = _cli(env, "job", "wait", joined_start["job_id"])
+            self.assertEqual(joined["status"], "succeeded", joined)
             self.assertGreater(joined["detail"]["probe"]["duration"], 1.0)
             bare = _cli(env, "entity", "add", "Edit", json.dumps({"title": "只有成片"}, ensure_ascii=False))
             _cli(env, "link", "uses_clip", bare["id"], clip_id)
@@ -584,7 +593,10 @@ def _launch_log(env: dict, binary: str, entry: str, product: Path, base: str, to
             return _cli(env, *args)
         return _run_json(binary, list(args), env)
 
-    work = call("work", f"{entry}广告", "广告", "独立生成")
+    spaces = call("workspace", "list")
+    call("workspace", "use", spaces["items"][0]["id"])
+    work = call("work", "add", f"{entry}广告", "广告", "独立生成")
+    call("work", "use", work["id"])
     style = call("entity", "add", "Style", json.dumps({"title": "电影感", "ban": "禁止定格"}, ensure_ascii=False))
     place = call("entity", "add", "Place", json.dumps({"title": "桌面", "facts": "左光"}, ensure_ascii=False))
     camera = call("entity", "add", "Camera", json.dumps({"title": "固定", "move": "固定镜头"}, ensure_ascii=False))

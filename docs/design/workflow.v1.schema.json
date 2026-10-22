@@ -1,0 +1,417 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cvgen.internal/schemas/workflow.v1.json",
+  "title": "cvgen 工作流规格 v1",
+  "description": "只校验结构。引用是否存在、步骤图是否无环、本体约束等语义检查由服务端校验器完成，见 docs/design/v2.md 第 4 节。",
+  "type": "object",
+  "required": ["schema", "name", "inputs", "budget", "nodes", "outputs"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {"const": "cvgen.workflow/v1"},
+    "name": {"type": "string", "minLength": 1, "maxLength": 80},
+    "description": {"type": "string", "maxLength": 2000},
+    "inputs": {"$ref": "#/$defs/inputSchema"},
+    "assets": {
+      "description": "别名 → 素材库里钉死版本的素材。节点里用 {{assets.别名}} 引用。",
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/alias"},
+      "additionalProperties": {"$ref": "#/$defs/assetRef"}
+    },
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "resolution": {"$ref": "#/$defs/resolution"},
+        "duration_seconds": {"type": "integer", "minimum": 1, "maximum": 15},
+        "priority": {"$ref": "#/$defs/priority"}
+      }
+    },
+    "budget": {
+      "description": "试跑估算超过预算时不允许发起运行；运行中累计超过时按 policy.on_budget_exceeded 处理。",
+      "type": "object",
+      "required": ["max_yuan"],
+      "additionalProperties": false,
+      "properties": {
+        "max_yuan": {"type": "number", "exclusiveMinimum": 0},
+        "max_video_seconds": {"type": "integer", "minimum": 1},
+        "max_gpu_minutes": {"type": "number", "exclusiveMinimum": 0},
+        "max_llm_tokens": {"type": "integer", "minimum": 1}
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "batch_barrier": {
+          "description": "true 时同一批次的视频任务要等整批图片完成（且闸门通过）后才放行。",
+          "type": "boolean",
+          "default": false
+        },
+        "gpu_order": {
+          "description": "run_first：先把一条片子跑完再跑下一条；round_robin：多条运行轮流。",
+          "enum": ["run_first", "round_robin"],
+          "default": "run_first"
+        },
+        "on_budget_exceeded": {"enum": ["pause", "fail"], "default": "pause"}
+      }
+    },
+    "nodes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {"$ref": "#/$defs/node"}
+    },
+    "outputs": {
+      "description": "对外交付的产物名 → 节点路径。服务 API 和回调只返回这里列出的产物。",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"$ref": "#/$defs/alias"},
+      "additionalProperties": {"$ref": "#/$defs/path"}
+    }
+  },
+  "$defs": {
+    "alias": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,39}$"},
+    "nodeId": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,39}$"},
+    "assetRef": {
+      "description": "asset:素材名@版本。版本必须是正整数，不允许 latest。",
+      "type": "string",
+      "pattern": "^asset:[a-z0-9][a-z0-9_-]{0,63}@[1-9][0-9]*$"
+    },
+    "providerRef": {
+      "description": "供应商实例名或实例组名，例如 llm.default、image.default、video.comfy、video.autodl-h3。由运维配置解析到资源池。",
+      "type": "string",
+      "pattern": "^(llm|image|video|tts|music)\\.[a-z0-9][a-z0-9-]{0,39}$"
+    },
+    "path": {
+      "description": "取值路径：inputs.x、assets.x、run.x，或 节点id[.字段...]。",
+      "type": "string",
+      "pattern": "^(inputs|assets|run|[a-z][a-z0-9_]{0,39})(\\.[a-z_][a-z0-9_]{0,39})*$"
+    },
+    "template": {
+      "description": "文本模板，只支持 {{路径}} 替换。列表按“、”连接；在 links.to 里列表会展开成多条关系。",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 20000
+    },
+    "role": {"enum": ["身份", "空间", "细节", "风格", "分镜", "音色", "情感", "首帧", "尾帧"]},
+    "resolution": {"enum": ["480p横", "480p竖", "768p横", "768p竖", "480p(1:1)", "768p(1:1)"]},
+    "priority": {"type": "integer", "minimum": -100, "maximum": 100},
+    "relation": {
+      "description": "contains、belongs_to 由服务维护，工作流里不能写。",
+      "enum": ["has_appearance", "wears", "located_in", "holds", "detail_of", "styled_as", "shot_with", "voices", "voiced_by", "contrasts_with", "continues", "references", "derived_from", "uses_clip"]
+    },
+    "retry": {
+      "description": "按次计费且不可安全重试的供应商（如 autodl H3）会被服务端强制为 1。",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_attempts": {"type": "integer", "minimum": 1, "maximum": 10},
+        "backoff_seconds": {"type": "integer", "minimum": 0, "maximum": 3600}
+      }
+    },
+    "inputSchema": {
+      "description": "生产台表单和服务 API 的输入校验都由它生成。必须是对象型 JSON Schema；完整的元模式校验在服务端做。",
+      "type": "object",
+      "required": ["type", "properties"],
+      "properties": {
+        "type": {"const": "object"},
+        "required": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "properties": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {"$ref": "#/$defs/alias"},
+          "additionalProperties": {"$ref": "#/$defs/inputField"}
+        }
+      }
+    },
+    "inputField": {
+      "type": "object",
+      "required": ["type", "title"],
+      "properties": {
+        "type": {"enum": ["string", "integer", "number", "boolean", "array"]},
+        "title": {"type": "string", "minLength": 1},
+        "description": {"type": "string"},
+        "format": {"enum": ["text", "multiline", "asset-upload"]},
+        "x-role": {"$ref": "#/$defs/role"},
+        "items": {"$ref": "#/$defs/inputItem"}
+      },
+      "$comment": "其余标准关键字（enum、default、minLength、maxItems 等）允许出现，由服务端元模式校验。"
+    },
+    "inputItem": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {"enum": ["string", "integer", "number", "boolean"]},
+        "format": {"enum": ["text", "multiline", "asset-upload"]},
+        "x-role": {"$ref": "#/$defs/role"}
+      }
+    },
+    "materializeRule": {
+      "description": "把大模型输出里的一个字段写成本体实体。字段是列表时每项一个实体。",
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {"enum": ["Shot", "Line", "Beat", "Detail", "Subject", "Appearance", "Place"]},
+        "fields": {
+          "description": "实体字段 → 模板。不写时按同名字段直接拷贝。",
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/template"}
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "to"],
+            "additionalProperties": false,
+            "properties": {
+              "name": {"$ref": "#/$defs/relation"},
+              "to": {"$ref": "#/$defs/template"},
+              "note": {"type": "string", "maxLength": 200}
+            }
+          }
+        },
+        "children": {
+          "description": "嵌套字段 → 子实体规则。子规则必须写 parent_link，父实体作为关系起点。",
+          "type": "object",
+          "propertyNames": {"$ref": "#/$defs/alias"},
+          "additionalProperties": {
+            "allOf": [{"$ref": "#/$defs/materializeRule"}],
+            "required": ["parent_link"]
+          }
+        },
+        "parent_link": {"$ref": "#/$defs/relation"}
+      }
+    },
+    "nodeBase": {
+      "type": "object",
+      "required": ["id", "kind"],
+      "properties": {
+        "id": {"$ref": "#/$defs/nodeId"},
+        "kind": {"enum": ["llm", "image", "video", "tts", "music", "check", "edit", "gate"]},
+        "title": {"type": "string", "maxLength": 80},
+        "after": {"type": "array", "items": {"$ref": "#/$defs/nodeId"}, "uniqueItems": true},
+        "for_each": {"$ref": "#/$defs/path"},
+        "priority": {"$ref": "#/$defs/priority"},
+        "timeout_seconds": {"type": "integer", "minimum": 10, "maximum": 86400},
+        "retry": {"$ref": "#/$defs/retry"}
+      }
+    },
+    "llmNode": {
+      "allOf": [{"$ref": "#/$defs/nodeBase"}],
+      "required": ["provider", "prompt", "output_schema"],
+      "properties": {
+        "kind": {"const": "llm"},
+        "provider": {"$ref": "#/$defs/providerRef"},
+        "prompt": {
+          "type": "object",
+          "required": ["user"],
+          "additionalProperties": false,
+          "properties": {
+            "system": {"$ref": "#/$defs/template"},
+            "user": {"$ref": "#/$defs/template"}
+          }
+        },
+        "output_schema": {
+          "description": "素材库里的输出 schema（模板引用）或内联 JSON Schema。",
+          "oneOf": [{"$ref": "#/$defs/template"}, {"type": "object"}]
+        },
+        "materialize": {
+          "type": "object",
+          "propertyNames": {"$ref": "#/$defs/alias"},
+          "additionalProperties": {"$ref": "#/$defs/materializeRule"}
+        },
+        "repair": {"type": "integer", "minimum": 0, "maximum": 3, "default": 2},
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "temperature": {"type": "number", "minimum": 0, "maximum": 2},
+            "max_tokens": {"type": "integer", "minimum": 1, "maximum": 200000},
+            "seed": {"type": "integer"}
+          }
+        },
+        "cache": {"type": "boolean", "default": true}
+      },
+      "unevaluatedProperties": false
+    },
+    "imageNode": {
+      "allOf": [{"$ref": "#/$defs/nodeBase"}],
+      "required": ["provider", "prompt", "role"],
+      "properties": {
+        "kind": {"const": "image"},
+        "provider": {"$ref": "#/$defs/providerRef"},
+        "prompt": {"$ref": "#/$defs/template"},
+        "role": {"$ref": "#/$defs/role"},
+        "references": {"type": "array", "items": {"$ref": "#/$defs/template"}, "maxItems": 9},
+        "candidates": {"type": "integer", "minimum": 1, "maximum": 4, "default": 1},
+        "select": {
+          "description": "first：取第一张；gate：交给后续闸门由人挑。",
+          "enum": ["first", "gate"],
+          "default": "first"
+        },
+        "attach_to": {
+          "description": "选中的图作为 Reference 连到哪个实体（references 关系），通常是 {{item}}。",
+          "$ref": "#/$defs/template"
+        },
+        "params": {"type": "object"}
+      },
+      "unevaluatedProperties": false
+    },
+    "videoNode": {
+      "allOf": [{"$ref": "#/$defs/nodeBase"}],
+      "required": ["provider", "for_each"],
+      "properties": {
+        "kind": {"const": "video"},
+        "provider": {"$ref": "#/$defs/providerRef"},
+        "template": {
+          "description": "ComfyUI 模板素材（模板引用）。供应商是 ComfyUI 时必填。",
+          "$ref": "#/$defs/template"
+        },
+        "prompt": {
+          "description": "compose：由本体组合四段式提示词（默认）；也可以写模板覆盖。",
+          "$ref": "#/$defs/template",
+          "default": "compose"
+        },
+        "resolution": {"$ref": "#/$defs/resolution"},
+        "continuity": {
+          "description": "previous_last_frame：同一运行内上一镜的尾帧作为“空间”参考，镜头之间自动串行。",
+          "enum": ["none", "previous_last_frame"],
+          "default": "none"
+        },
+        "allow_warnings": {"type": "boolean", "default": false},
+        "params": {"type": "object"}
+      },
+      "unevaluatedProperties": false
+    },
+    "ttsNode": {
+      "allOf": [{"$ref": "#/$defs/nodeBase"}],
+      "required": ["provider", "for_each", "voice"],
+      "properties": {
+        "kind": {"const": "tts"},
+        "provider": {"$ref": "#/$defs/providerRef"},
+        "voice": {"$ref": "#/$defs/template"},
+        "text": {"$ref": "#/$defs/template", "default": "{{item.text}}"}
+      },
+      "unevaluatedProperties": false
+    },
+    "musicNode": {
+      "allOf": [{"$ref": "#/$defs/nodeBase"}],
+      "required": ["provider", "prompt"],
+      "properties": {
+        "kind": {"const": "music"},
+        "provider": {"$ref": "#/$defs/providerRef"},
+        "prompt": {"$ref": "#/$defs/template"},
+        "lyrics": {"$ref": "#/$defs/template"},
+        "duration_seconds": {"type": "integer", "minimum": 5, "maximum": 300}
+      },
+      "unevaluatedProperties": false
+    },
+    "checkNode": {
+      "allOf": [{"$ref": "#/$defs/nodeBase"}],
+      "required": ["for_each", "rules"],
+      "properties": {
+        "kind": {"const": "check"},
+        "rules": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"enum": ["duration", "resolution", "loudness", "contact_sheet", "last_frame", "dialogue"]}
+        },
+        "on_fail": {
+          "description": "fail：整个运行失败；flag：标记后继续；rerun_upstream：重跑对应的上游条目。",
+          "enum": ["fail", "flag", "rerun_upstream"],
+          "default": "flag"
+        },
+        "max_reruns": {"type": "integer", "minimum": 0, "maximum": 2, "default": 1}
+      },
+      "unevaluatedProperties": false
+    },
+    "editOp": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["op"],
+          "additionalProperties": false,
+          "properties": {
+            "op": {"const": "join"},
+            "fade_seconds": {"type": "number", "minimum": 0, "maximum": 3}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["op"],
+          "additionalProperties": false,
+          "properties": {
+            "op": {"const": "mix"},
+            "music": {"$ref": "#/$defs/path"},
+            "narration": {"$ref": "#/$defs/path"},
+            "duck": {"type": "boolean", "default": true},
+            "music_gain_db": {"type": "number", "minimum": -40, "maximum": 6}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["op", "lines"],
+          "additionalProperties": false,
+          "properties": {
+            "op": {"const": "subtitle"},
+            "lines": {"$ref": "#/$defs/path"},
+            "burn": {"type": "boolean", "default": false}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["op"],
+          "additionalProperties": false,
+          "properties": {
+            "op": {"const": "export"},
+            "resolution": {"$ref": "#/$defs/resolution"},
+            "format": {"enum": ["mp4", "mov"], "default": "mp4"},
+            "name": {"$ref": "#/$defs/template"}
+          }
+        }
+      ]
+    },
+    "editNode": {
+      "allOf": [{"$ref": "#/$defs/nodeBase"}],
+      "required": ["ops"],
+      "properties": {
+        "kind": {"const": "edit"},
+        "clips": {"$ref": "#/$defs/path"},
+        "ops": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/editOp"}}
+      },
+      "unevaluatedProperties": false
+    },
+    "gateNode": {
+      "allOf": [{"$ref": "#/$defs/nodeBase"}],
+      "required": ["after", "show"],
+      "properties": {
+        "kind": {"const": "gate"},
+        "show": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/nodeId"}, "uniqueItems": true},
+        "approvers": {"enum": ["reviewer", "producer", "admin"], "default": "reviewer"},
+        "auto_approve": {"type": "boolean", "default": false},
+        "allow_redo": {
+          "description": "允许审批人驳回单个条目，只重跑那几条上游。",
+          "type": "boolean",
+          "default": true
+        },
+        "timeout_hours": {"type": "number", "exclusiveMinimum": 0, "maximum": 720},
+        "on_timeout": {"enum": ["wait", "approve", "reject"], "default": "wait"}
+      },
+      "unevaluatedProperties": false
+    },
+    "node": {
+      "oneOf": [
+        {"$ref": "#/$defs/llmNode"},
+        {"$ref": "#/$defs/imageNode"},
+        {"$ref": "#/$defs/videoNode"},
+        {"$ref": "#/$defs/ttsNode"},
+        {"$ref": "#/$defs/musicNode"},
+        {"$ref": "#/$defs/checkNode"},
+        {"$ref": "#/$defs/editNode"},
+        {"$ref": "#/$defs/gateNode"}
+      ]
+    }
+  }
+}

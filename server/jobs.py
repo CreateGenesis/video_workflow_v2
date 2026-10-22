@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -18,6 +19,17 @@ class JobRunner:
         self.storage = storage
         self.public_base = public_base
         self.data = data
+
+    def _owned(self, job: dict, data: dict, source: dict | None = None) -> dict:
+        work_id = (source or {}).get("data", {}).get("work_id") or (job.get("detail") or {}).get("work_id")
+        if not work_id and job.get("target_id"):
+            try:
+                work_id = self.store.get_entity(job["target_id"])["data"].get("work_id")
+            except KeyError:
+                work_id = ""
+        if not work_id:
+            return data
+        return {**data, "work_id": work_id}
 
     def start(self, kind: str, target_id: str | None, detail: dict) -> dict:
         if kind == "generate" and target_id:
@@ -119,11 +131,11 @@ class JobRunner:
         local.parent.mkdir(parents=True, exist_ok=True)
         download(state["video_url"], local)
         key = self.storage.put("clips", f"{job['id']}.mp4", local.read_bytes(), "video/mp4")
-        clip = self.store.add_entity("Clip", {
+        clip = self.store.add_entity("Clip", self._owned(job, {
             "title": job["target_id"],
             "duration": 0,
             "resolution": resolution,
-        }, key)
+        }), key)
         self._sheets(local, clip["id"], detail)
         detail["object_key"] = key
         detail["clip_id"] = clip["id"]
@@ -218,7 +230,7 @@ class JobRunner:
         local.parent.mkdir(parents=True, exist_ok=True)
         download(audio_url, local)
         key = self.storage.put("clips", f"{job['id']}.wav", local.read_bytes(), "audio/wav")
-        clip = self.store.add_entity("Clip", {"title": line["data"].get("title") or "旁白"}, key)
+        clip = self.store.add_entity("Clip", self._owned(job, {"title": line["data"].get("title") or "旁白"}, line), key)
         detail["clip_id"] = clip["id"]
         detail["object_key"] = key
         return detail
@@ -260,7 +272,7 @@ class JobRunner:
         key = self.storage.put(bucket, f"{job['id']}{suffix}", data, mime)
         entity = self.store.add_entity(
             "Reference",
-            {"title": url[:80], "role": job["detail"].get("role") or "风格", "source_url": url},
+            self._owned(job, {"title": url[:80], "role": job["detail"].get("role") or "风格", "source_url": url}),
             key,
         )
         detail = dict(job["detail"])
@@ -280,7 +292,7 @@ class JobRunner:
         if local.suffix.lower() in {".mp4", ".mov", ".webm"}:
             self._sheets(local, entity["id"], detail)
             detail["loudness"] = loudness(local)
-        observation = self.store.add_entity("Observation", {"title": entity["id"], "summary": str(info)})
+        observation = self.store.add_entity("Observation", self._owned(job, {"title": entity["id"], "summary": str(info)}, entity))
         detail["observed_id"] = entity["id"]
         detail["observation_id"] = observation["id"]
         return detail
@@ -298,10 +310,10 @@ class JobRunner:
     def _learn(self, job: dict) -> dict:
         detail = self._pull(job)
         entity = self.store.get_entity(detail["entity_id"])
-        observation = self.store.add_entity("Observation", {
+        observation = self.store.add_entity("Observation", self._owned(job, {
             "title": entity["data"].get("title") or entity["id"],
             "summary": "服务已下载并入库。字幕和转写由服务侧继续补，agent 不自己下载。",
-        })
+        }, entity))
         detail["learned_from"] = entity["id"]
         detail["observation_id"] = observation["id"]
         detail["note"] = observation["data"]["summary"]
@@ -310,12 +322,12 @@ class JobRunner:
     def _style(self, job: dict) -> dict:
         detail = self._inspect(job)
         info = detail.get("probe") or {}
-        style = self.store.add_entity("Style", {
+        style = self.store.add_entity("Style", self._owned(job, {
             "title": f"提取自 {job['target_id']}",
             "medium": f"{info.get('width')}x{info.get('height')} {info.get('codec') or ''}",
             "grade": "从接触表和响度观察，由 agent 决定是否锁定",
             "ban": "禁止定格。",
-        })
+        }))
         detail["styled_from"] = job["target_id"]
         detail["style_id"] = style["id"]
         return detail
@@ -328,22 +340,83 @@ class JobRunner:
         return resolve(self.store, capability)
 
     def _submit_hosted(self, capability: str, body: dict) -> tuple[dict, dict]:
-        from h3_client import _request, download, query
+        from h3_client import download
 
         cfg = self._require(capability)
-        url = f"{cfg['base'].rstrip('/')}/api/v1/comfyui/comfyui_workflow/{cfg['workflow']}"
+        if capability == "image":
+            url = f"{cfg['base'].rstrip('/')}/v1/images/generations"
+            payload_body = {
+                "model": cfg["model"],
+                "prompt": body.get("prompt") or "",
+                "size": "1024x1024",
+                "n": 1,
+            }
+        else:
+            url = f"{cfg['base'].rstrip('/')}/v1/audio/speech"
+            payload_body = {"model": cfg["model"], "input": body.get("prompt") or body.get("lyrics") or ""}
         try:
-            status, payload = _request(url, cfg["key"], body)
+            status, payload, raw = self._provider_json(url, cfg["key"], payload_body)
         except Exception as exc:
             raise RuntimeError(f"提交不明，不自动重发：{exc}") from exc
-        data = payload.get("data") or {}
-        if status != 200 or not data.get("task_id"):
+        if status in {401, 403}:
             raise RuntimeError("提交没有被接受，不自动重发")
-        state = self._wait_provider(query, data["task_id"])
-        media_url = state.get("video_url")
-        if not media_url:
-            raise RuntimeError(state.get("msg") or "生成没有返回文件")
-        return cfg, {"url": media_url, "download": download, "task_id": data["task_id"]}
+        if status != 200:
+            raise RuntimeError("提交没有被接受，不自动重发")
+        image = self._image_bytes(payload, raw)
+        if image:
+            return cfg, {"bytes": image, "download": None, "task_id": ""}
+        audio = raw if raw and not raw.lstrip().startswith(b"{") and not raw.lstrip().startswith(b"[") else b""
+        if capability == "music" and audio:
+            return cfg, {"bytes": audio, "download": None, "task_id": ""}
+        data = payload.get("data") or {}
+        task_id = data.get("task_id") if isinstance(data, dict) else ""
+        media_url = ""
+        if isinstance(data, dict):
+            media_url = data.get("url") or ""
+        if isinstance(payload.get("data"), list) and payload["data"] and isinstance(payload["data"][0], dict):
+            media_url = media_url or payload["data"][0].get("url") or ""
+        if media_url:
+            return cfg, {"url": media_url, "download": download, "task_id": task_id}
+        raise RuntimeError("提交没有被接受，不自动重发")
+
+    def _provider_json(self, url: str, key: str, body: dict) -> tuple[int, dict, bytes]:
+        import json
+
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "User-Agent": "cvgen",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as response:
+                raw = response.read()
+                status = response.status
+        except urllib.error.HTTPError as exc:
+            raw = exc.read()
+            status = exc.code
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        return status, payload, raw
+
+    def _image_bytes(self, payload: dict, raw: bytes) -> bytes:
+        import base64
+
+        if raw.startswith(b"\x89PNG") or raw.startswith(b"\xff\xd8"):
+            return raw
+        data = payload.get("data")
+        if isinstance(data, list) and data and isinstance(data[0], dict) and data[0].get("b64_json"):
+            return base64.b64decode(data[0]["b64_json"])
+        return b""
 
     def _image(self, job: dict) -> dict:
         shot = self.store.get_entity(job["target_id"])
@@ -355,18 +428,25 @@ class JobRunner:
         })
         local = self.data / "tmp" / f"{job['id']}.png"
         local.parent.mkdir(parents=True, exist_ok=True)
-        accepted["download"](accepted["url"], local)
+        if accepted.get("bytes"):
+            local.write_bytes(accepted["bytes"])
+        else:
+            accepted["download"](accepted["url"], local)
         role = (job["detail"] or {}).get("role") or "细节"
         key = self.storage.put("references", f"{job['id']}.png", local.read_bytes(), "image/png")
-        entity = self.store.add_entity("Reference", {
+        if (job["detail"] or {}).get("redraw_of"):
+            previous = self.store.get_entity(job["detail"]["redraw_of"])
+            if previous.get("object_key") == key:
+                raise RuntimeError("旧图被覆盖")
+        entity = self.store.add_entity("Reference", self._owned(job, {
             "title": shot["data"].get("title") or "生图参考",
             "role": role,
             "take": "只采用这张图里的产品和构图",
             "ignore": "不采用背景里无关的文字和标识",
-        }, key)
+        }, shot), key)
         self.store.add_link("references", shot["id"], entity["id"], "生图入库")
         detail = dict(job["detail"])
-        detail.update({"reference_id": entity["id"], "object_key": key, "workflow": cfg["workflow"]})
+        detail.update({"reference_id": entity["id"], "object_key": key, "model": cfg["model"]})
         return detail
 
     def _music(self, job: dict) -> dict:
@@ -379,11 +459,14 @@ class JobRunner:
         cfg, accepted = self._submit_hosted("music", {"prompt": text, "lyrics": text})
         local = self.data / "tmp" / f"{job['id']}.wav"
         local.parent.mkdir(parents=True, exist_ok=True)
-        accepted["download"](accepted["url"], local)
+        if accepted.get("bytes"):
+            local.write_bytes(accepted["bytes"])
+        else:
+            accepted["download"](accepted["url"], local)
         key = self.storage.put("clips", f"{job['id']}.wav", local.read_bytes(), "audio/wav")
-        clip = self.store.add_entity("Clip", {"title": text[:40], "duration": 0}, key)
+        clip = self.store.add_entity("Clip", self._owned(job, {"title": text[:40], "duration": 0}), key)
         detail = dict(job["detail"])
-        detail.update({"clip_id": clip["id"], "object_key": key, "workflow": cfg["workflow"]})
+        detail.update({"clip_id": clip["id"], "object_key": key, "model": cfg["model"]})
         return detail
 
     def _check(self, job: dict) -> dict:
@@ -414,12 +497,12 @@ class JobRunner:
         frame_at(local, dest, second)
         key = self.storage.put("references", f"{job['id']}.jpg", dest.read_bytes(), "image/jpeg")
         title = "上一镜尾帧" if at == "last" else "成片首帧"
-        ref = self.store.add_entity("Reference", {
+        ref = self.store.add_entity("Reference", self._owned(job, {
             "title": title,
             "role": role,
             "take": "只采用画面里的空间和人物位置",
             "ignore": "不采用这一帧里已经结束的动作",
-        }, key)
+        }, entity), key)
         self.store.add_link("derived_from", ref["id"], entity["id"], f"抽自{at}")
         detail = dict(job["detail"])
         detail.update({"reference_id": ref["id"], "object_key": key, "at": at, "role": role})
@@ -473,10 +556,10 @@ class JobRunner:
             mixed.replace(dest)
         info = probe(dest)
         key = self.storage.put("renders", f"{job['id']}.mp4", dest.read_bytes(), "video/mp4")
-        clip = self.store.add_entity("Clip", {
+        clip = self.store.add_entity("Clip", self._owned(job, {
             "title": detail.get("title") or "剪辑成片",
             "duration": info["duration"],
-        }, key)
+        }), key)
         if clip_ids:
             self.store.add_link("derived_from", clip["id"], clip_ids[0], "由剪辑导出")
         detail.update({"clip_id": clip["id"], "object_key": key, "probe": info, "clips": clip_ids})

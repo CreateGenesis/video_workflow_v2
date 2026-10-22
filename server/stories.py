@@ -31,7 +31,14 @@ ZERO_PARAGRAPHS = [
 
 
 def seed_zero_carry(store: Store) -> dict:
+    from .scope import ensure_scope
+
+    ensured = ensure_scope(store)
+    workspace_id = store.setting("selected_workspace") or ensured["workspace_id"]
+    store.set_setting("selected_workspace", workspace_id)
     work = store.add_entity("Work", {"title": "你就叫零", "kind": "短片", "brief": "雪原上把她背起来"})
+    store.add_link("contains", workspace_id, work["id"], "当前工作区")
+    store.set_setting("selected_work", work["id"])
     place = store.add_entity("Place", {
         "title": "西伯利亚雪原",
         "facts": "稀疏白桦，倒伏白桦在左，积雪没过小腿，风从画面右侧吹来，地平线有一线暗橙",

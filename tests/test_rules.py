@@ -50,6 +50,23 @@ def build_shot(store: Store, *, role: str = "细节", duration: int = 5, size: s
 
 
 class RuleTests(unittest.TestCase):
+    def test_config_uses_environment_when_env_file_is_absent(self) -> None:
+        import h3_client
+
+        previous = os.environ.get("AUTODL_API_TOKEN")
+        os.environ["AUTODL_API_TOKEN"] = "env-only-token"
+        try:
+            cfg = h3_client.config()
+        finally:
+            if previous is None:
+                os.environ.pop("AUTODL_API_TOKEN", None)
+            else:
+                os.environ["AUTODL_API_TOKEN"] = previous
+        self.assertEqual(cfg["token"], "env-only-token")
+        self.assertTrue(cfg["base"])
+        self.assertTrue(cfg["workflow"])
+
+
     def test_generate_blocks_open_unknown_and_succeeded(self) -> None:
         for status in ("queued", "running", "unknown", "succeeded"):
             allowed, reason = can_generate([{"status": status, "kind": "generate"}])

@@ -1,0 +1,115 @@
+{
+  "schema": "cvgen.workflow/v1",
+  "name": "产品广告-15秒",
+  "description": "三张锚定图、一个主动作。由 cvgen-product-ad 的探索定型。关键帧走生图 API，视频走自部署 ComfyUI。",
+  "inputs": {
+    "type": "object",
+    "required": ["product", "facts", "inspiration", "product_images"],
+    "properties": {
+      "product": {"type": "string", "title": "产品名", "maxLength": 40},
+      "facts": {"type": "array", "title": "已核对的卖点", "items": {"type": "string"}, "minItems": 1, "maxItems": 5},
+      "inspiration": {"type": "string", "title": "灵感", "format": "multiline", "maxLength": 500},
+      "product_images": {
+        "type": "array",
+        "title": "产品图",
+        "items": {"type": "string", "format": "asset-upload", "x-role": "身份"},
+        "minItems": 1,
+        "maxItems": 3
+      }
+    }
+  },
+  "assets": {
+    "style": "asset:style-brand-clean@2",
+    "camera": "asset:camera-slow-push@1",
+    "script_prompt": "asset:prompt-ad-script@3",
+    "shot_list": "asset:schema-shot-list@1",
+    "i2v": "asset:comfy-wan-i2v@2",
+    "music_bed": "asset:music-bright-bed@1"
+  },
+  "defaults": {"resolution": "768p横", "duration_seconds": 5},
+  "budget": {"max_yuan": 30, "max_video_seconds": 45, "max_gpu_minutes": 60},
+  "policy": {"batch_barrier": false, "gpu_order": "run_first", "on_budget_exceeded": "pause"},
+  "nodes": [
+    {
+      "id": "script",
+      "kind": "llm",
+      "title": "灵感 → 三镜分镜",
+      "provider": "llm.default",
+      "prompt": {
+        "system": "{{assets.script_prompt}}",
+        "user": "产品：{{inputs.product}}\n已核对的卖点：{{inputs.facts}}\n灵感：{{inputs.inspiration}}"
+      },
+      "output_schema": "{{assets.shot_list}}",
+      "materialize": {
+        "shots": {
+          "type": "Shot",
+          "links": [
+            {"name": "styled_as", "to": "{{assets.style}}"},
+            {"name": "shot_with", "to": "{{assets.camera}}"},
+            {"name": "references", "to": "{{inputs.product_images}}", "note": "只锁产品外形和标识"}
+          ]
+        }
+      },
+      "repair": 2,
+      "params": {"temperature": 0.7}
+    },
+    {
+      "id": "keyframes",
+      "kind": "image",
+      "title": "每镜首帧",
+      "provider": "image.default",
+      "for_each": "script.shots",
+      "prompt": "{{item.action}}。{{assets.style.medium}}，{{assets.style.grade}}。",
+      "role": "首帧",
+      "references": ["{{inputs.product_images}}"],
+      "candidates": 2,
+      "select": "gate",
+      "attach_to": "{{item}}"
+    },
+    {
+      "id": "review",
+      "kind": "gate",
+      "title": "审关键帧（重抽图便宜，重跑视频贵）",
+      "after": ["keyframes"],
+      "show": ["script", "keyframes"],
+      "approvers": "reviewer",
+      "auto_approve": false,
+      "allow_redo": true,
+      "timeout_hours": 24,
+      "on_timeout": "wait"
+    },
+    {
+      "id": "clips",
+      "kind": "video",
+      "title": "逐镜生成",
+      "provider": "video.comfy",
+      "for_each": "script.shots",
+      "after": ["review"],
+      "template": "{{assets.i2v}}",
+      "prompt": "compose",
+      "continuity": "none",
+      "timeout_seconds": 7200,
+      "retry": {"max_attempts": 2, "backoff_seconds": 60}
+    },
+    {
+      "id": "qc",
+      "kind": "check",
+      "for_each": "clips",
+      "rules": ["duration", "resolution", "contact_sheet", "last_frame"],
+      "on_fail": "rerun_upstream",
+      "max_reruns": 1
+    },
+    {
+      "id": "final",
+      "kind": "edit",
+      "after": ["qc"],
+      "clips": "clips",
+      "ops": [
+        {"op": "join", "fade_seconds": 0.3},
+        {"op": "mix", "music": "assets.music_bed", "duck": false, "music_gain_db": -12},
+        {"op": "export", "resolution": "768p横", "format": "mp4", "name": "{{inputs.product}}-15s"}
+      ]
+    }
+  ],
+  "outputs": {"video": "final.export", "clips": "clips", "keyframes": "keyframes"}
+}

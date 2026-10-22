@@ -38,7 +38,7 @@ class H3Error(RuntimeError):
 def load_env(path: Path | None = None) -> dict[str, str]:
     env_path = path or ROOT / ".env"
     if not env_path.is_file():
-        raise H3Error(f"missing {env_path}")
+        return {}
     values: dict[str, str] = {}
     for raw in env_path.read_text(encoding="utf-8-sig").splitlines():
         line = raw.strip()

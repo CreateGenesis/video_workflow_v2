@@ -32,6 +32,7 @@ services:
       H3_WORKFLOW_ID: ${H3_WORKFLOW_ID:-minimax_h3_zm_u24}
       FFMPEG_PASSTHROUGH: "0"
       CVGEN_ADMIN_PASSWORD: ${CVGEN_ADMIN_PASSWORD:-}
+      CVGEN_SOCKS5: ${CVGEN_SOCKS5:-}
     volumes:
       - cvgen:/data
     depends_on:
