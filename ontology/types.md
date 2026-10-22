@@ -2,17 +2,7 @@
 
 服务启动时读取这份原型。实例存在库里，类型不写死在表结构上。
 
-## Workspace
-label: 工作区
-summary: 一个人的一组作品。作品必须属于一个工作区。
-field title 必填 名称
-
-## Work
-label: 作品
-summary: 短片或广告主题。批量生产只是把风格、运镜和镜头挂在这里。
-field title 必填 名称
-field brief 选填 主题
-field kind 选填 短片或广告
+工作区和作品是服务里的独立对象，不在这里定义。下面的类型既可以是某个作品里的实体，也可以提升为素材库里带版本的素材。
 
 ## Subject
 label: 主体

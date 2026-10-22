@@ -1,12 +1,14 @@
-"""Compose a shot from linked entities. This does not generate video."""
+"""Compose a shot from linked entities. This does not generate video.
+
+`graph` is anything with get(node_id) and linked(source_id, relation) returning nodes shaped like
+{"id", "type", "data", "artifact_id"} — the database graph, or an in-memory graph during dry runs.
+"""
 
 from __future__ import annotations
 
-from .ontology import ROLES
-from .store import Store
+from .ontology import RESOLUTIONS, ROLES
 
 HEADINGS = ("【参考素材说明】", "【核心创意】", "【画面过程描述】", "【整体要求补充】")
-RESOLUTIONS = ("480p横", "480p竖", "768p横", "768p竖", "480p(1:1)", "768p(1:1)")
 
 
 def _alignment(first_at: int | None, last_at: int | None, duration: int) -> str:
@@ -19,13 +21,6 @@ def _alignment(first_at: int | None, last_at: int | None, duration: int) -> str:
     if last_at:
         return f"参考图怎样对齐成片：参考图 {last_at} 对齐 {end} 秒。"
     return ""
-
-
-def _linked(store: Store, source_id: str, name: str) -> list[dict]:
-    items = []
-    for link in store.links(source_id, name):
-        items.append(store.get_entity(link["target_id"]))
-    return items
 
 
 def lint(prompt: str, shot: dict, refs: list[dict]) -> list[str]:
@@ -44,18 +39,19 @@ def lint(prompt: str, shot: dict, refs: list[dict]) -> list[str]:
     return warnings
 
 
-def compose(store: Store, shot_id: str, resolution: str = "768p横") -> dict:
-    shot = store.get_entity(shot_id)
+def compose(graph, shot_id: str, resolution: str = "768p横", extra_refs: list[dict] | None = None) -> dict:
+    """extra_refs are appended after linked references (for example the previous shot's last frame)."""
+    shot = graph.get(shot_id)
     if shot["type"] != "Shot":
         raise ValueError("只能组合镜头")
     if resolution not in RESOLUTIONS:
         raise ValueError("分辨率不在这个工作流的档位里")
-    places = _linked(store, shot_id, "located_in")
-    details = _linked(store, shot_id, "holds")
-    styles = _linked(store, shot_id, "styled_as")
-    cameras = _linked(store, shot_id, "shot_with")
-    beats = _linked(store, shot_id, "contrasts_with")
-    refs = _linked(store, shot_id, "references")
+    places = graph.linked(shot_id, "located_in")
+    details = graph.linked(shot_id, "holds")
+    styles = graph.linked(shot_id, "styled_as")
+    cameras = graph.linked(shot_id, "shot_with")
+    beats = graph.linked(shot_id, "contrasts_with")
+    refs = graph.linked(shot_id, "references") + list(extra_refs or [])
     warnings = []
     if len(cameras) > 1:
         warnings.append("一条镜头连了多种运镜")
@@ -148,7 +144,7 @@ def compose(store: Store, shot_id: str, resolution: str = "768p横") -> dict:
             {
                 "id": ref["id"],
                 "role": ref["data"].get("role"),
-                "object_key": ref.get("object_key"),
+                "artifact_id": ref.get("artifact_id"),
                 "title": ref["data"].get("title"),
             }
             for ref in refs
