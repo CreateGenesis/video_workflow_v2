@@ -50,6 +50,20 @@ def load_env(path: Path | None = None) -> dict[str, str]:
 
 
 def config() -> dict[str, str]:
+    """Saved video settings override AUTODL_API_* when the server has stored them."""
+    try:
+        from server.providers import resolve
+        import server.app as app_module
+
+        saved = resolve(app_module.store, "video")
+        if saved["source"] == "saved":
+            if not saved["key"]:
+                raise H3Error("AUTODL_API_TOKEN is missing")
+            return {"token": saved["key"], "base": saved["base"].rstrip("/"), "workflow": saved["workflow"]}
+    except H3Error:
+        raise
+    except Exception:
+        pass
     file_env = load_env()
     token = os.environ.get("AUTODL_API_TOKEN") or file_env.get("AUTODL_API_TOKEN")
     if not token:

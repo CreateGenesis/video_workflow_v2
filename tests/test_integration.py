@@ -16,11 +16,20 @@ from server.store import Store
 
 
 SKILL_NAMES = (
+    "cvgen-3d",
+    "cvgen-brand",
     "cvgen-check",
+    "cvgen-continuity",
     "cvgen-edit",
     "cvgen-episode",
     "cvgen-h3-prompt",
+    "cvgen-handdrawn",
+    "cvgen-index",
     "cvgen-learn",
+    "cvgen-local",
+    "cvgen-modes",
+    "cvgen-music",
+    "cvgen-product-ad",
     "cvgen-reverse",
     "cvgen-style",
     "cvgen-zero",

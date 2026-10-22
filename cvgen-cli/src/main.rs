@@ -47,8 +47,13 @@ fn run(args: Vec<String>, stdout: &mut dyn Write) -> Result<(), String> {
         "inspect" => one_body(stdout, args.collect(), |id| ("POST", "/api/inspect".into(), json!({"target_id": id}))),
         "reverse" => one_body(stdout, args.collect(), |id| ("POST", "/api/reverse".into(), json!({"target_id": id}))),
         "learn" => learn(stdout, args.collect()),
-        "style" => one_body(stdout, args.collect(), |id| ("POST", "/api/style".into(), json!({"target_id": id}))),
+        "style" => style_cmd(stdout, args.collect()),
+        "reference" => reference_upload(stdout, args.collect()),
         "preview" => one_path(stdout, args.collect(), |id| format!("/api/preview/{id}"), "GET"),
+        "media" => media_cmd(stdout, args.collect()),
+        "image" => image_cmd(stdout, args.collect()),
+        "music" => music_cmd(stdout, args.collect()),
+        "check" => one_body(stdout, args.collect(), |id| ("POST", "/api/check".into(), json!({"target_id": id}))),
         "ffmpeg" => ffmpeg(stdout, args.collect()),
         "edit" => edit(stdout, args.collect()),
         "job" => job(stdout, args.collect()),
@@ -80,16 +85,26 @@ cvgen 操作云端视频系统。执行由服务完成。
   cvgen inspect <成片>
   cvgen reverse <实体>
   cvgen learn <地址>
-  cvgen style <成片>
+  cvgen style extract <成片>
+  cvgen reference upload <文件> --role <用途> [--title 名称]
+  cvgen reference frame <成片> [--at first|last] [--role 首帧|尾帧|空间]
   cvgen preview <实体>
+  cvgen media upload <文件> --kind image|video|audio
+  cvgen media get <对象键>
+  cvgen image <镜头> [--role 用途]
+  cvgen music <台词或文本>
+  cvgen check <成片>
   cvgen ffmpeg -- <参数>...
   cvgen edit join <成片>... [--fade 秒]
   cvgen edit export <剪辑>
+  cvgen edit mix <剪辑>
+  cvgen edit subtitle <剪辑>
   cvgen job show <任务>
+  cvgen job wait <任务>
   cvgen skill list
   cvgen skill show <名称>
   cvgen canvas
-  cvgen batch <作品>
+  cvgen batch show <作品>
   cvgen work <标题> [类型] [简介]
 
 先运行 cvgen login。网页管理员批准后，凭证只保存在本机。
@@ -221,17 +236,268 @@ fn edit(stdout: &mut dyn Write, args: Vec<String>) -> Result<(), String> {
             let id = need(args.next(), "缺少剪辑")?;
             authed_print(stdout, "POST", "/api/edit", Some(json!({"target_id": id, "detail": {"op": "export"}})))
         }
-        _ => Err("用法：cvgen edit join|export".into()),
+        Some("mix") => {
+            let id = need(args.next(), "缺少剪辑")?;
+            authed_print(stdout, "POST", "/api/edit", Some(json!({"target_id": id, "detail": {"op": "mix"}})))
+        }
+        Some("subtitle") => {
+            let id = need(args.next(), "缺少剪辑")?;
+            authed_print(stdout, "POST", "/api/edit", Some(json!({"target_id": id, "detail": {"op": "subtitle"}})))
+        }
+        _ => Err("用法：cvgen edit join|export|mix|subtitle".into()),
     }
 }
 
 fn job(stdout: &mut dyn Write, args: Vec<String>) -> Result<(), String> {
     let mut args = args.into_iter();
-    if args.next().as_deref() != Some("show") {
-        return Err("用法：cvgen job show <任务>".into());
+    match args.next().as_deref() {
+        Some("show") => {
+            let id = need(args.next(), "缺少任务")?;
+            authed_print(stdout, "GET", &format!("/api/job/{id}"), None)
+        }
+        Some("wait") => job_wait(stdout, args.collect()),
+        _ => Err("用法：cvgen job show|wait <任务>".into()),
     }
-    let id = need(args.next(), "缺少任务")?;
-    authed_print(stdout, "GET", &format!("/api/job/{id}"), None)
+}
+
+fn job_wait(stdout: &mut dyn Write, args: Vec<String>) -> Result<(), String> {
+    let id = need(args.into_iter().next(), "缺少任务")?;
+    let path = format!("/api/job/{id}");
+    let saved = load_auth()?;
+    let started = std::time::Instant::now();
+    loop {
+        let value = request_auth("GET", &saved.base, &path, &saved.token, None)?;
+        let status = value.get("status").and_then(Value::as_str).unwrap_or("");
+        if status == "succeeded" || status == "failed" || status == "unknown" {
+            return print_json(stdout, &value);
+        }
+        if started.elapsed() > Duration::from_secs(120) {
+            return Err("任务还没结束。".into());
+        }
+        thread::sleep(Duration::from_millis(400));
+    }
+}
+
+fn style_cmd(stdout: &mut dyn Write, args: Vec<String>) -> Result<(), String> {
+    let mut args = args.into_iter();
+    let first = need(args.next(), "缺少成片")?;
+    let id = if first == "extract" {
+        need(args.next(), "缺少成片")?
+    } else {
+        first
+    };
+    authed_print(stdout, "POST", "/api/style", Some(json!({"target_id": id})))
+}
+
+fn reference_upload(stdout: &mut dyn Write, args: Vec<String>) -> Result<(), String> {
+    let mut positional = Vec::new();
+    let mut role = String::new();
+    let mut title = String::new();
+    let mut take = String::new();
+    let mut ignore = String::new();
+    let mut at = "last".to_string();
+    let mut args = args.into_iter();
+    match args.next().as_deref() {
+        Some("frame") => {
+            while let Some(arg) = args.next() {
+                match arg.as_str() {
+                    "--at" => at = need(args.next(), "缺少位置")?,
+                    "--role" => role = need(args.next(), "缺少用途")?,
+                    other => positional.push(other.to_string()),
+                }
+            }
+            let clip_id = need(positional.first().cloned(), "缺少成片")?;
+            if role.is_empty() {
+                role = "空间".into();
+            }
+            return authed_print(
+                stdout,
+                "POST",
+                "/api/frame",
+                Some(json!({"target_id": clip_id, "detail": {"at": at, "role": role}})),
+            );
+        }
+        Some("upload") => {}
+        _ => return Err("用法：cvgen reference upload|frame".into()),
+    }
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--role" => role = need(args.next(), "缺少用途")?,
+            "--title" => title = need(args.next(), "缺少名称")?,
+            "--take" => take = need(args.next(), "缺少采用说明")?,
+            "--ignore" => ignore = need(args.next(), "缺少忽略说明")?,
+            other => positional.push(other.to_string()),
+        }
+    }
+    let path = need(positional.first().cloned(), "缺少文件")?;
+    if role.is_empty() {
+        return Err("缺少用途。加上 --role。".into());
+    }
+    let saved = load_auth()?;
+    let value = upload_reference(&saved.base, &saved.token, &path, &role, &title, &take, &ignore)?;
+    print_json(stdout, &value)
+}
+
+fn upload_reference(
+    base: &str,
+    token: &str,
+    path: &str,
+    role: &str,
+    title: &str,
+    take: &str,
+    ignore: &str,
+) -> Result<Value, String> {
+    let file = Path::new(path);
+    if !file.is_file() {
+        return Err("参考文件不存在。".into());
+    }
+    let filename = file.file_name().and_then(|name| name.to_str()).unwrap_or("ref.bin").to_string();
+    let bytes = fs::read(file).map_err(|err| format!("无法读取参考文件：{err}"))?;
+    let boundary = format!("cvgen{}", std::process::id());
+    let mut body = Vec::new();
+    for (name, value) in [("role", role), ("title", title), ("take", take), ("ignore", ignore)] {
+        body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n").as_bytes());
+    }
+    body.extend_from_slice(
+        format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: application/octet-stream\r\n\r\n").as_bytes(),
+    );
+    body.extend_from_slice(&bytes);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    let url = format!("{}/api/reference", base.trim_end_matches('/'));
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .no_proxy()
+        .build()
+        .map_err(|err| format!("无法建立连接：{err}"))?;
+    let response = client
+        .post(url)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Content-Type", format!("multipart/form-data; boundary={boundary}"))
+        .body(body)
+        .send()
+        .map_err(|err| format!("请求失败：{err}"))?;
+    let status = response.status();
+    let text = response.text().map_err(|err| format!("无法读取响应：{err}"))?;
+    if !status.is_success() {
+        return Err(format!("服务返回 {}", status.as_u16()));
+    }
+    serde_json::from_str(&text).map_err(|err| format!("响应不是 JSON：{err}"))
+}
+
+fn media_cmd(stdout: &mut dyn Write, args: Vec<String>) -> Result<(), String> {
+    let mut args = args.into_iter();
+    match args.next().as_deref() {
+        Some("upload") => media_upload(stdout, args.collect()),
+        Some("get") => media_get(stdout, args.collect()),
+        Some(other) if !other.starts_with('-') && args.next().is_none() => media_get(stdout, vec![other.to_string()]),
+        _ => Err("用法：cvgen media upload|get".into()),
+    }
+}
+
+fn media_upload(stdout: &mut dyn Write, args: Vec<String>) -> Result<(), String> {
+    let mut positional = Vec::new();
+    let mut kind = String::new();
+    let mut title = String::new();
+    let mut role = "细节".to_string();
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--kind" => kind = need(args.next(), "缺少种类")?,
+            "--title" => title = need(args.next(), "缺少名称")?,
+            "--role" => role = need(args.next(), "缺少用途")?,
+            other => positional.push(other.to_string()),
+        }
+    }
+    let path = need(positional.first().cloned(), "缺少文件")?;
+    if kind != "image" && kind != "video" && kind != "audio" {
+        return Err("文件种类只能是 image、video 或 audio。".into());
+    }
+    let saved = load_auth()?;
+    let value = upload_media(&saved.base, &saved.token, &path, &kind, &title, &role)?;
+    print_json(stdout, &value)
+}
+
+fn upload_media(base: &str, token: &str, path: &str, kind: &str, title: &str, role: &str) -> Result<Value, String> {
+    let file = Path::new(path);
+    if !file.is_file() {
+        return Err("文件不存在。".into());
+    }
+    let filename = file.file_name().and_then(|name| name.to_str()).unwrap_or("media.bin").to_string();
+    let bytes = fs::read(file).map_err(|err| format!("无法读取文件：{err}"))?;
+    let boundary = format!("cvgen{}", std::process::id());
+    let mut body = Vec::new();
+    for (name, value) in [("kind", kind), ("title", title), ("role", role)] {
+        body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n").as_bytes());
+    }
+    body.extend_from_slice(
+        format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: application/octet-stream\r\n\r\n").as_bytes(),
+    );
+    body.extend_from_slice(&bytes);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    let url = format!("{}/api/media", base.trim_end_matches('/'));
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .no_proxy()
+        .build()
+        .map_err(|err| format!("无法建立连接：{err}"))?;
+    let response = client
+        .post(url)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Content-Type", format!("multipart/form-data; boundary={boundary}"))
+        .body(body)
+        .send()
+        .map_err(|err| format!("请求失败：{err}"))?;
+    let status = response.status();
+    let text = response.text().map_err(|err| format!("无法读取响应：{err}"))?;
+    if !status.is_success() {
+        return Err(format!("服务返回 {}", status.as_u16()));
+    }
+    serde_json::from_str(&text).map_err(|err| format!("响应不是 JSON：{err}"))
+}
+
+fn image_cmd(stdout: &mut dyn Write, args: Vec<String>) -> Result<(), String> {
+    let mut positional = Vec::new();
+    let mut role = "细节".to_string();
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        if arg == "--role" {
+            role = need(args.next(), "缺少用途")?;
+        } else {
+            positional.push(arg);
+        }
+    }
+    let shot_id = need(positional.first().cloned(), "缺少镜头")?;
+    authed_print(stdout, "POST", "/api/image", Some(json!({"target_id": shot_id, "detail": {"role": role}})))
+}
+
+fn music_cmd(stdout: &mut dyn Write, args: Vec<String>) -> Result<(), String> {
+    let text = args.join(" ");
+    if text.trim().is_empty() {
+        return Err("缺少台词或文本".into());
+    }
+    authed_print(stdout, "POST", "/api/music", Some(json!({"detail": {"text": text}})))
+}
+
+fn media_get(stdout: &mut dyn Write, args: Vec<String>) -> Result<(), String> {
+    let key = need(args.into_iter().next(), "缺少对象键")?;
+    let saved = load_auth()?;
+    let url = format!("{}/media/{}", saved.base.trim_end_matches('/'), key.trim_start_matches('/'));
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .no_proxy()
+        .build()
+        .map_err(|err| format!("无法建立连接：{err}"))?;
+    let response = client
+        .get(url)
+        .header("Authorization", format!("Bearer {}", saved.token))
+        .send()
+        .map_err(|err| format!("请求失败：{err}"))?;
+    let status = response.status();
+    let bytes = response.bytes().map_err(|err| format!("无法读取文件：{err}"))?;
+    if !status.is_success() {
+        return Err(format!("服务返回 {}", status.as_u16()));
+    }
+    print_json(stdout, &json!({"object_key": key, "bytes": bytes.len()}))
 }
 
 fn skill(stdout: &mut dyn Write, args: Vec<String>) -> Result<(), String> {
@@ -247,7 +513,13 @@ fn skill(stdout: &mut dyn Write, args: Vec<String>) -> Result<(), String> {
 }
 
 fn batch(stdout: &mut dyn Write, args: Vec<String>) -> Result<(), String> {
-    let id = need(args.into_iter().next(), "缺少作品")?;
+    let mut args = args.into_iter();
+    let first = need(args.next(), "缺少作品")?;
+    let id = if first == "show" {
+        need(args.next(), "缺少作品")?
+    } else {
+        first
+    };
     authed_print(stdout, "GET", &format!("/api/batch/{id}"), None)
 }
 
@@ -397,6 +669,7 @@ fn request(method: &str, base: &str, path: &str, token: Option<&str>, body: Opti
     let url = format!("{}{}", base.trim_end_matches('/'), path);
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(60))
+        .no_proxy()
         .build()
         .map_err(|err| format!("无法建立连接：{err}"))?;
     let mut builder = client.request(method.parse().map_err(|_| format!("未知方法 {method}"))?, &url);
@@ -494,8 +767,9 @@ mod tests {
         let text = String::from_utf8(help).unwrap();
         for command in [
             "login", "ontology", "entity", "link", "derive", "shot", "story", "generate", "tts", "pull",
-            "inspect", "reverse", "learn", "style", "preview", "ffmpeg", "edit", "job", "skill", "canvas",
-            "batch", "work",
+            "inspect", "reverse", "learn", "style extract", "reference upload", "preview", "ffmpeg",
+            "edit join", "edit export", "edit mix", "edit subtitle", "job show", "job wait", "skill", "canvas", "batch show", "work",
+            "media upload", "image", "music", "check", "reference frame",
         ] {
             assert!(text.contains(command), "{command} missing from help");
         }

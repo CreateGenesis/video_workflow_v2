@@ -57,7 +57,9 @@ jobs:
             cp "$src" "$stage/cvgen"
             chmod 755 "$stage/cvgen"
           fi
-          printf '%s\n' 'cvgen 操作工具' '' '这是原生可执行文件。解压后直接运行。' 'Linux / macOS：./cvgen login --base 服务地址' 'Windows：cvgen.exe login --base 服务地址' '' '网页管理员批准设备码后，这台 cvgen 才会在线。同时只能有一台在线。' > "$stage/使用说明.txt"
+          printf '%s\n' 'cvgen 操作工具' '' '解压后直接运行可执行文件。先读 skills/cvgen-index.md。' '登录后用 cvgen skill show <名称> 读取正文。正文在服务端，不在这个压缩包里。' 'Linux / macOS：./cvgen login --base 服务地址' 'Windows：cvgen.exe login --base 服务地址' '' '网页管理员批准设备码后，这台 cvgen 才会在线。同时只能有一台在线。' > "$stage/使用说明.txt"
+          mkdir -p "$stage/skills"
+          cp skills/cvgen-index.md "$stage/skills/cvgen-index.md"
           mkdir -p tools/dist
           rm -f "tools/dist/${{ matrix.archive }}"
           (cd "$stage" && zip -X -r "$OLDPWD/tools/dist/${{ matrix.archive }}" .)

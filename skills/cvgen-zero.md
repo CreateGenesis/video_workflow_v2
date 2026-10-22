@@ -9,4 +9,5 @@
 - `cvgen story` 写入作品、地点、纱布、风格、运镜、情绪和两条参考，并连到 15 秒镜头。
 - `cvgen shot compose <镜头>` 读四段提示词。确认三拍、纱布特写和“动作从下文重新开始”。
 - 警告为空后再发 `cvgen generate <镜头>`。已排队、已成片或提交不明时，服务会拒绝第二次提交。
-- `cvgen job show <任务>` 读取入库成片和接触表。网页画布与 `cvgen canvas` 看同一份镜头、边和任务。
+- `cvgen job show <任务>` 读取状态。需要等到结束时发 `cvgen job wait <任务>`，再读成片和接触表。网页画布与 `cvgen canvas` 看同一份镜头、边和任务。
+- 成片入库后 `cvgen check <成片>`。下一镜要用这一镜空间时，发 `cvgen reference frame <成片> --at last --role 空间`。

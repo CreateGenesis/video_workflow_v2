@@ -132,6 +132,11 @@ class Store:
         }
 
     def add_link(self, name: str, source_id: str, target_id: str, note: str = "") -> dict:
+        if name == "derived_from":
+            source = self.get_entity(source_id)
+            target = self.get_entity(target_id)
+            if source["type"] not in {"Clip", "Reference"} or target["type"] not in {"Clip", "Reference"}:
+                raise RuntimeError("derived_from 只能指向已经存在的成片或参考")
         item = {
             "id": new_id("link"),
             "name": name,

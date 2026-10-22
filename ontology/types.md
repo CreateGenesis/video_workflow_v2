@@ -101,7 +101,7 @@ field calm 选填 0 到 1.4
 label: 参考
 summary: 一张图、一段音或一条视频。每张图只有一个用途。
 field title 必填 名称
-field role 必填 身份、空间、细节、风格、分镜、音色、情感
+field role 必填 身份、空间、细节、风格、分镜、音色、情感、首帧、尾帧
 field take 选填 只采用什么
 field ignore 选填 不采用什么
 field source_url 选填 来源地址
@@ -124,3 +124,6 @@ label: 剪辑
 summary: 一条时间线。剪辑由服务执行。
 field title 必填 名称
 field note 选填 入出点和淡出
+field narration 选填 旁白成片
+field music 选填 配乐成片
+field lines 选填 必须留在画面上的台词

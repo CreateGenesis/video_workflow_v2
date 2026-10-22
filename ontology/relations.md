@@ -63,9 +63,9 @@ to: Reference
 label: 使用这张参考
 
 ## derived_from
-from: Reference
+from: Clip
 to: Clip
-label: 派生自这条成片
+label: 派生自已有成片或参考
 
 ## uses_clip
 from: Edit

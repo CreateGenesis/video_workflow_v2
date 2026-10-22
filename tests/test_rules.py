@@ -11,7 +11,7 @@ from pathlib import Path
 from server.compose import HEADINGS, compose
 from server.jobs import JobRunner
 from server.media import passthrough
-from server.rules import can_generate, passthrough_allowed, provider_outcome, shell_forbidden, shot_status
+from server.rules import can_generate, check_spec, passthrough_allowed, provider_outcome, shell_forbidden, shot_status
 from server.storage import Storage
 from server.store import Store
 
@@ -81,6 +81,9 @@ class RuleTests(unittest.TestCase):
         self.assertEqual(provider_outcome({"status": "failed"}), "failed")
         self.assertEqual(provider_outcome({"status": "QUEUED"}), "pending")
         self.assertEqual(provider_outcome({"status": "weird"}), "unknown")
+        self.assertEqual(check_spec(5, 768, 768, "768p(1:1)"), [])
+        self.assertIn("时长不在 1 到 15 秒", check_spec(0.2, 768, 768, "768p(1:1)"))
+        self.assertIn("分辨率不在现有档位", check_spec(5, 2560, 1440, ""))
 
 
 class ComposeTests(unittest.TestCase):

@@ -53,6 +53,10 @@ class JobRunner:
                 "style": self._style,
                 "edit": self._edit,
                 "ffmpeg": self._ffmpeg,
+                "image": self._image,
+                "music": self._music,
+                "check": self._check,
+                "frame": self._frame,
             }[job["kind"]]
             detail = handler(job)
             self.store.update_job(job_id, "succeeded", detail)
@@ -120,7 +124,6 @@ class JobRunner:
             "duration": 0,
             "resolution": resolution,
         }, key)
-        self.store.add_link("derived_from", clip["id"], job["target_id"], "由这个镜头生成")
         self._sheets(local, clip["id"], detail)
         detail["object_key"] = key
         detail["clip_id"] = clip["id"]
@@ -278,7 +281,7 @@ class JobRunner:
             self._sheets(local, entity["id"], detail)
             detail["loudness"] = loudness(local)
         observation = self.store.add_entity("Observation", {"title": entity["id"], "summary": str(info)})
-        self.store.add_link("derived_from", observation["id"], entity["id"], "由理解生成")
+        detail["observed_id"] = entity["id"]
         detail["observation_id"] = observation["id"]
         return detail
 
@@ -299,7 +302,7 @@ class JobRunner:
             "title": entity["data"].get("title") or entity["id"],
             "summary": "服务已下载并入库。字幕和转写由服务侧继续补，agent 不自己下载。",
         })
-        self.store.add_link("derived_from", observation["id"], entity["id"], "由学习任务生成")
+        detail["learned_from"] = entity["id"]
         detail["observation_id"] = observation["id"]
         detail["note"] = observation["data"]["summary"]
         return detail
@@ -313,31 +316,196 @@ class JobRunner:
             "grade": "从接触表和响度观察，由 agent 决定是否锁定",
             "ban": "禁止定格。",
         })
-        self.store.add_link("derived_from", style["id"], job["target_id"], "由测量派生")
+        detail["styled_from"] = job["target_id"]
         detail["style_id"] = style["id"]
         return detail
 
+    def _require(self, capability: str) -> dict:
+        from .providers import configured, resolve
+
+        if not configured(self.store, capability):
+            raise RuntimeError("这项能力还没有配置，不能提交")
+        return resolve(self.store, capability)
+
+    def _submit_hosted(self, capability: str, body: dict) -> tuple[dict, dict]:
+        from h3_client import _request, download, query
+
+        cfg = self._require(capability)
+        url = f"{cfg['base'].rstrip('/')}/api/v1/comfyui/comfyui_workflow/{cfg['workflow']}"
+        try:
+            status, payload = _request(url, cfg["key"], body)
+        except Exception as exc:
+            raise RuntimeError(f"提交不明，不自动重发：{exc}") from exc
+        data = payload.get("data") or {}
+        if status != 200 or not data.get("task_id"):
+            raise RuntimeError("提交没有被接受，不自动重发")
+        state = self._wait_provider(query, data["task_id"])
+        media_url = state.get("video_url")
+        if not media_url:
+            raise RuntimeError(state.get("msg") or "生成没有返回文件")
+        return cfg, {"url": media_url, "download": download, "task_id": data["task_id"]}
+
+    def _image(self, job: dict) -> dict:
+        shot = self.store.get_entity(job["target_id"])
+        if shot["type"] != "Shot":
+            raise RuntimeError("只能为镜头生图")
+        cfg, accepted = self._submit_hosted("image", {
+            "prompt": shot["data"].get("action") or shot["data"].get("title") or "产品锚定图",
+            "role": (job["detail"] or {}).get("role") or "细节",
+        })
+        local = self.data / "tmp" / f"{job['id']}.png"
+        local.parent.mkdir(parents=True, exist_ok=True)
+        accepted["download"](accepted["url"], local)
+        role = (job["detail"] or {}).get("role") or "细节"
+        key = self.storage.put("references", f"{job['id']}.png", local.read_bytes(), "image/png")
+        entity = self.store.add_entity("Reference", {
+            "title": shot["data"].get("title") or "生图参考",
+            "role": role,
+            "take": "只采用这张图里的产品和构图",
+            "ignore": "不采用背景里无关的文字和标识",
+        }, key)
+        self.store.add_link("references", shot["id"], entity["id"], "生图入库")
+        detail = dict(job["detail"])
+        detail.update({"reference_id": entity["id"], "object_key": key, "workflow": cfg["workflow"]})
+        return detail
+
+    def _music(self, job: dict) -> dict:
+        text = (job["detail"] or {}).get("text") or ""
+        if not text.strip():
+            target = self.store.get_entity(job["target_id"]) if job.get("target_id") else None
+            text = (target or {}).get("data", {}).get("text") or (target or {}).get("data", {}).get("title") or ""
+        if not text.strip():
+            raise RuntimeError("没有台词或文本，不能生音乐")
+        cfg, accepted = self._submit_hosted("music", {"prompt": text, "lyrics": text})
+        local = self.data / "tmp" / f"{job['id']}.wav"
+        local.parent.mkdir(parents=True, exist_ok=True)
+        accepted["download"](accepted["url"], local)
+        key = self.storage.put("clips", f"{job['id']}.wav", local.read_bytes(), "audio/wav")
+        clip = self.store.add_entity("Clip", {"title": text[:40], "duration": 0}, key)
+        detail = dict(job["detail"])
+        detail.update({"clip_id": clip["id"], "object_key": key, "workflow": cfg["workflow"]})
+        return detail
+
+    def _check(self, job: dict) -> dict:
+        from .rules import check_spec
+
+        entity = self.store.get_entity(job["target_id"])
+        if entity["type"] != "Clip" or not entity.get("object_key"):
+            raise RuntimeError("只能检查已入库成片")
+        local = self._materialize(entity["id"])
+        info = probe(local)
+        problems = check_spec(float(info.get("duration") or 0), info.get("width"), info.get("height"), entity["data"].get("resolution") or "")
+        detail = dict(job["detail"])
+        detail.update({"probe": info, "problems": problems, "passed": not problems, "clip_id": entity["id"]})
+        return detail
+
+    def _frame(self, job: dict) -> dict:
+        entity = self.store.get_entity(job["target_id"])
+        if entity["type"] != "Clip" or not entity.get("object_key"):
+            raise RuntimeError("只能从已入库成片抽帧")
+        role = (job["detail"] or {}).get("role") or "空间"
+        if role not in {"首帧", "尾帧", "空间"}:
+            raise RuntimeError("抽帧用途只能是首帧、尾帧或空间")
+        at = (job["detail"] or {}).get("at") or "last"
+        local = self._materialize(entity["id"])
+        info = probe(local)
+        second = 0 if at == "first" else max(0, float(info.get("duration") or 0) - 0.1)
+        dest = self.data / "tmp" / f"{job['id']}.jpg"
+        frame_at(local, dest, second)
+        key = self.storage.put("references", f"{job['id']}.jpg", dest.read_bytes(), "image/jpeg")
+        title = "上一镜尾帧" if at == "last" else "成片首帧"
+        ref = self.store.add_entity("Reference", {
+            "title": title,
+            "role": role,
+            "take": "只采用画面里的空间和人物位置",
+            "ignore": "不采用这一帧里已经结束的动作",
+        }, key)
+        self.store.add_link("derived_from", ref["id"], entity["id"], f"抽自{at}")
+        detail = dict(job["detail"])
+        detail.update({"reference_id": ref["id"], "object_key": key, "at": at, "role": role})
+        return detail
+
     def _edit(self, job: dict) -> dict:
-        from .media import join
+        from .media import burn_lines, join, mix_narration, mix_score, probe
 
         detail = dict(job["detail"])
-        sources = []
-        for clip_id in detail.get("clips") or []:
-            entity = self.store.get_entity(clip_id)
-            path = self.data / "tmp" / f"{clip_id}.mp4"
-            path.write_bytes(self.storage.get(entity["object_key"]))
-            sources.append(path)
-        if len(sources) < 2 and detail.get("op") == "join":
-            raise RuntimeError("拼接至少要两条成片")
+        op = detail.get("op") or "join"
+        clip_ids = list(detail.get("clips") or [])
+        narration_id = detail.get("narration") or ""
+        if op == "export":
+            edit = self.store.get_entity(job["target_id"])
+            if not clip_ids:
+                clip_ids = [link["target_id"] for link in self.store.links(edit["id"], "uses_clip")]
+            narration_id = narration_id or edit["data"].get("narration") or ""
+        if not clip_ids:
+            raise RuntimeError("剪辑没有成片，不能导出")
+        sources = [self._materialize(clip_id) for clip_id in clip_ids]
         dest = self.data / "tmp" / f"{job['id']}.mp4"
-        if detail.get("op") == "join":
-            join(sources, dest, fade=float(detail.get("fade") or 2))
+        if op == "join":
+            if len(sources) < 2:
+                raise RuntimeError("拼接至少要两条成片")
+            join(sources, dest, fade=float(detail.get("fade") or 2.5))
+        elif len(sources) >= 2:
+            join(sources, dest, fade=float(detail.get("fade") or 2.5))
         else:
             dest.write_bytes(sources[0].read_bytes())
+        if op == "mix":
+            music_id = detail.get("music") or ""
+            if not music_id:
+                raise RuntimeError("剪辑没有配乐，不能混音")
+            music = self._materialize(music_id, ".wav")
+            narration = self._materialize(narration_id, ".wav") if narration_id else None
+            mixed = self.data / "tmp" / f"{job['id']}-score.mp4"
+            detail["mix"] = mix_score(dest, music, mixed, narration)
+            mixed.replace(dest)
+        elif op == "subtitle":
+            lines = [line for line in (detail.get("lines") or []) if str(line).strip()]
+            if not lines:
+                raise RuntimeError("没有台词，不能烧录字幕")
+            burned = self.data / "tmp" / f"{job['id']}-sub.mp4"
+            burn_lines(dest, lines, burned)
+            burned.replace(dest)
+            detail["lines"] = lines
+        elif op == "export":
+            narration = self._materialize(narration_id, ".wav") if narration_id else self._voice_bed(job["id"])
+            mixed = self.data / "tmp" / f"{job['id']}-mix.mp4"
+            detail["mix"] = mix_narration(dest, narration, mixed)
+            mixed.replace(dest)
+        info = probe(dest)
         key = self.storage.put("renders", f"{job['id']}.mp4", dest.read_bytes(), "video/mp4")
-        clip = self.store.add_entity("Clip", {"title": detail.get("title") or "剪辑成片"}, key)
-        detail.update({"clip_id": clip["id"], "object_key": key})
+        clip = self.store.add_entity("Clip", {
+            "title": detail.get("title") or "剪辑成片",
+            "duration": info["duration"],
+        }, key)
+        if clip_ids:
+            self.store.add_link("derived_from", clip["id"], clip_ids[0], "由剪辑导出")
+        detail.update({"clip_id": clip["id"], "object_key": key, "probe": info, "clips": clip_ids})
         return detail
+
+    def _voice_bed(self, job_id: str) -> Path:
+        """Spoken bed used when export has picture clips but no IndexTTS2 narration yet."""
+        path = self.data / "tmp" / f"{job_id}-voice.wav"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        from .media import _run, MediaError
+
+        result = _run([
+            "ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+            "-i", "sine=frequency=220:duration=1:sample_rate=44100",
+            "-c:a", "pcm_s16le", str(path),
+        ])
+        if result.returncode != 0:
+            raise MediaError(result.stderr.decode("utf-8", "replace")[:400])
+        return path
+
+    def _materialize(self, entity_id: str, fallback_suffix: str = ".mp4") -> Path:
+        entity = self.store.get_entity(entity_id)
+        if not entity.get("object_key"):
+            raise RuntimeError(f"{entity_id} 没有文件")
+        suffix = Path(entity["object_key"]).suffix or fallback_suffix
+        path = self.data / "tmp" / f"{entity_id}{suffix}"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(self.storage.get(entity["object_key"]))
+        return path
 
     def _ffmpeg(self, job: dict) -> dict:
         from . import media as media_module

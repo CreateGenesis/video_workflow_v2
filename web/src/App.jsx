@@ -287,7 +287,7 @@ function Tools() {
     <section className="space-y-4">
       <header>
         <h2 className="text-xl font-semibold">下载 cvgen</h2>
-        <p className="text-sm text-muted-foreground">下载的是可执行文件。Linux 和 macOS 解压后运行 ./cvgen，Windows 运行 cvgen.exe。先运行 cvgen login，再由管理员批准。同时只能有一台在线。</p>
+        <p className="text-sm text-muted-foreground">压缩包里有可执行文件、使用说明和技能索引。先读索引，登录后再运行 cvgen skill show 读取正文。Linux 和 macOS 运行 ./cvgen，Windows 运行 cvgen.exe。先运行 cvgen login，再由管理员批准。同时只能有一台在线。</p>
       </header>
       <div className="grid gap-4 md:grid-cols-3">
         {items.map((item) => (
@@ -466,7 +466,104 @@ function Admin({ view, onLogin, onLogout }) {
       <Separator />
       <p className="text-sm text-muted-foreground">ffmpeg 透传现在是{view.settings.ffmpeg_passthrough ? "打开" : "关闭"}。开关只能由已授权的 cvgen 改。</p>
       <PlatformBind />
+      <ProviderSettings />
     </section>
+  );
+}
+
+const PROVIDERS = [
+  ["video", "生视频"],
+  ["image", "生图"],
+  ["music", "生音乐"],
+];
+
+function ProviderSettings() {
+  const [items, setItems] = useState([]);
+  const [forms, setForms] = useState({
+    video: { base: "", key: "", workflow: "" },
+    image: { base: "", key: "", workflow: "" },
+    music: { base: "", key: "", workflow: "" },
+  });
+  const [message, setMessage] = useState("");
+
+  async function refresh() {
+    const response = await fetch("/api/settings/providers", { headers: adminHeaders() });
+    if (!response.ok) return;
+    const data = await response.json();
+    setItems(data.items || []);
+    setForms((current) => {
+      const next = { ...current };
+      for (const item of data.items || []) {
+        next[item.capability] = {
+          ...next[item.capability],
+          base: item.base || "",
+          workflow: item.workflow || "",
+          key: "",
+        };
+      }
+      return next;
+    });
+  }
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  function update(capability, field, value) {
+    setForms((current) => ({ ...current, [capability]: { ...current[capability], [field]: value } }));
+  }
+
+  async function save(event, capability) {
+    event.preventDefault();
+    const form = forms[capability];
+    const response = await fetch("/api/settings/providers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...adminHeaders() },
+      body: JSON.stringify({ capability, base: form.base, key: form.key, workflow: form.workflow }),
+    });
+    const data = await response.json();
+    setMessage(response.ok ? `${capability} 已保存，密钥只留在服务端` : data.detail || "没有保存");
+    if (response.ok) refresh();
+  }
+
+  const known = Object.fromEntries(items.map((item) => [item.capability, item]));
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>生视频、生图、生音乐</CardTitle>
+        <CardDescription>已保存的值覆盖同名环境变量。页面只显示是否已配置，密钥回显打码。留空密钥表示沿用已保存的密钥。</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        {PROVIDERS.map(([capability, label]) => {
+          const item = known[capability] || {};
+          const form = forms[capability];
+          return (
+            <form key={capability} className="grid gap-3 border-t border-border pt-4 first:border-0 first:pt-0" onSubmit={(event) => save(event, capability)}>
+              <div className="flex items-center justify-between">
+                <p className="font-medium">{label}</p>
+                <Badge status={item.configured ? "在线" : "离线"}>{item.configured ? "已配置" : "未配置"}{item.key ? ` ${item.key}` : ""}</Badge>
+              </div>
+              <div className="grid gap-3 md:grid-cols-3">
+                <div className="space-y-1">
+                  <Label htmlFor={`${capability}-base`}>地址</Label>
+                  <Input id={`${capability}-base`} value={form.base} onChange={(event) => update(capability, "base", event.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor={`${capability}-key`}>访问密钥</Label>
+                  <Input id={`${capability}-key`} type="password" value={form.key} onChange={(event) => update(capability, "key", event.target.value)} placeholder={item.key || "未配置"} />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor={`${capability}-workflow`}>工作流编号</Label>
+                  <Input id={`${capability}-workflow`} value={form.workflow} onChange={(event) => update(capability, "workflow", event.target.value)} />
+                </div>
+              </div>
+              <Button className="w-fit" type="submit">保存{label}</Button>
+            </form>
+          );
+        })}
+        {message && <p className="text-sm text-muted-foreground">{message}</p>}
+      </CardContent>
+    </Card>
   );
 }
 

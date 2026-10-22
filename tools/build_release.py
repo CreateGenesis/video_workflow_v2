@@ -1,4 +1,4 @@
-"""Zip native cvgen binaries. The product is one executable per archive."""
+"""Zip native cvgen binaries plus the skill index."""
 
 from __future__ import annotations
 
@@ -11,7 +11,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 NOTE = """cvgen 操作工具
 
-这是原生可执行文件。解压后直接运行。
+解压后直接运行可执行文件。先读 skills/cvgen-index.md。
+登录后用 cvgen skill show <名称> 读取正文。正文在服务端，不在这个压缩包里。
 Linux / macOS：./cvgen login --base 服务地址
 Windows：cvgen.exe login --base 服务地址
 
@@ -49,9 +50,11 @@ def package(out: Path, binaries: dict[str, Path]) -> list[Path]:
         if filename.startswith("cvgen-macos") and data[:4] not in {b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe"}:
             raise SystemExit(f"{source} 不是 macOS 可执行文件")
         dest = out / filename
+        index = (ROOT / "skills" / "cvgen-index.md").read_bytes()
         with zipfile.ZipFile(dest, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             _add(archive, name, data, executable=True)
             _add(archive, "使用说明.txt", NOTE.encode("utf-8"))
+            _add(archive, "skills/cvgen-index.md", index)
         written.append(dest)
     return written
 

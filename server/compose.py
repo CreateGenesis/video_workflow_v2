@@ -9,6 +9,18 @@ HEADINGS = ("【参考素材说明】", "【核心创意】", "【画面过程�
 RESOLUTIONS = ("480p横", "480p竖", "768p横", "768p竖", "480p(1:1)", "768p(1:1)")
 
 
+def _alignment(first_at: int | None, last_at: int | None, duration: int) -> str:
+    """Put the keyframe sentence first so image-to-video does not drift."""
+    end = f"{duration:.2f}"
+    if first_at and last_at:
+        return f"参考图怎样对齐成片：参考图 {first_at} 对齐 0.00 秒；参考图 {last_at} 对齐 {end} 秒。"
+    if first_at:
+        return f"对于目标成片，在 0.00 秒，参考图 {first_at} 被完整采用。"
+    if last_at:
+        return f"参考图怎样对齐成片：参考图 {last_at} 对齐 {end} 秒。"
+    return ""
+
+
 def _linked(store: Store, source_id: str, name: str) -> list[dict]:
     items = []
     for link in store.links(source_id, name):
@@ -55,6 +67,8 @@ def compose(store: Store, shot_id: str, resolution: str = "768p横") -> dict:
         raise ValueError("时长必须是 1 到 15 秒")
 
     ref_lines = []
+    first_at = None
+    last_at = None
     for index, ref in enumerate(refs, 1):
         role = ref["data"].get("role", "")
         if role not in ROLES:
@@ -62,10 +76,20 @@ def compose(store: Store, shot_id: str, resolution: str = "768p横") -> dict:
         take = ref["data"].get("take") or "只采用画面中指定的部分"
         ignore = ref["data"].get("ignore") or "不采用其余内容"
         extra = "动作从下文重新开始。" if role == "空间" else ""
-        ref_lines.append(f"参考图 {index}：{ref['data'].get('title', role)}。只采用{take}。不采用{ignore}。{extra}")
+        if role == "首帧":
+            first_at = index
+            extra = "这张图是 0.00 秒的首帧。"
+        elif role == "尾帧":
+            last_at = index
+            extra = f"这张图对齐 {duration:.2f} 秒。"
+        label = ref["data"].get("title", role)
+        ref_lines.append(f"参考图 {index}：{label}。只采用{take}。不采用{ignore}。{extra}")
     if not ref_lines:
         ref_lines.append("无参考素材（纯文字生成视频）")
         warnings.append("这个工作流没有参考图就不能提交")
+    alignment = _alignment(first_at, last_at, duration)
+    if alignment:
+        ref_lines.insert(0, alignment)
 
     detail_text = "、".join(item["data"].get("title", "") for item in details)
     beat = beats[0]["data"].get("curve", "") if beats else ""

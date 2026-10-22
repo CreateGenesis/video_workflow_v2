@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ONTOLOGY = ROOT / "ontology"
 
-ROLES = {"身份", "空间", "细节", "风格", "分镜", "音色", "情感"}
+ROLES = {"身份", "空间", "细节", "风格", "分镜", "音色", "情感", "首帧", "尾帧"}
 
 
 def _sections(text: str) -> list[tuple[str, list[str]]]:

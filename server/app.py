@@ -7,12 +7,13 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .compose import compose
+from .providers import public_view, save as save_provider
 from .jobs import JobRunner
 from .rules import passthrough_allowed, shot_status
 from .ontology import document, load_relations, load_types
@@ -154,6 +155,7 @@ def view() -> dict:
             "public_base": PUBLIC,
             "admin_ready": bool(store.setting("admin_password")),
             "cvgen": online_cvgen(),
+            "providers": public_view(store),
         },
     }
 
@@ -312,7 +314,8 @@ def add_link(body: LinkIn, authorization: str | None = Header(default=None)) -> 
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="实体不存在") from exc
     rule = relations[body.name]
-    if source["type"] != rule["from"] or target["type"] != rule["to"]:
+    source_ok = source["type"] == rule["from"] or (body.name == "references" and source["type"] == "Voice")
+    if not source_ok or target["type"] != rule["to"]:
         raise HTTPException(status_code=400, detail=f"这条关系只能从 {rule['from']} 连到 {rule['to']}")
     if body.name == "shot_with" and store.links(body.source_id, "shot_with"):
         raise HTTPException(status_code=400, detail="一条镜头只能有一种运镜")
@@ -324,8 +327,16 @@ def add_link(body: LinkIn, authorization: str | None = Header(default=None)) -> 
 @app.post("/api/derive")
 def derive(body: LinkIn, authorization: str | None = Header(default=None)) -> dict:
     require_agent(authorization)
-    body.name = "derived_from"
-    return add_link(body, authorization)
+    try:
+        source = store.get_entity(body.source_id)
+        target = store.get_entity(body.target_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="实体不存在") from exc
+    if source["type"] not in {"Clip", "Reference"} or target["type"] not in {"Clip", "Reference"}:
+        raise HTTPException(status_code=400, detail="derived_from 只能指向已经存在的成片或参考")
+    link = store.add_link("derived_from", body.source_id, body.target_id, body.note)
+    store.record("derive", link)
+    return link
 
 
 @app.get("/api/shot/{shot_id}/compose")
@@ -401,7 +412,121 @@ def style(body: JobIn, authorization: str | None = Header(default=None)) -> dict
 @app.post("/api/edit")
 def edit(body: JobIn, authorization: str | None = Header(default=None)) -> dict:
     require_agent(authorization)
-    return runner.start("edit", body.target_id, body.detail)
+    detail = dict(body.detail)
+    if detail.get("op") in {"export", "mix", "subtitle"} and body.target_id:
+        try:
+            edit_entity = store.get_entity(body.target_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="没有这个剪辑") from exc
+        if edit_entity["type"] != "Edit":
+            raise HTTPException(status_code=400, detail="只能导出剪辑")
+        detail["clips"] = detail.get("clips") or [link["target_id"] for link in store.links(body.target_id, "uses_clip")]
+        detail["narration"] = detail.get("narration") or (edit_entity["data"].get("narration") or "")
+        detail["music"] = detail.get("music") or (edit_entity["data"].get("music") or "")
+        detail["lines"] = detail.get("lines") or (edit_entity["data"].get("lines") or [])
+        detail["title"] = edit_entity["data"].get("title") or "剪辑成片"
+    return runner.start("edit", body.target_id, detail)
+
+
+@app.post("/api/media")
+def upload_media(
+    file: UploadFile = File(...),
+    kind: str = Form(...),
+    title: str = Form(""),
+    role: str = Form("细节"),
+    authorization: str | None = Header(default=None),
+) -> dict:
+    require_agent(authorization)
+    from .ontology import ROLES
+
+    if kind not in {"image", "video", "audio"}:
+        raise HTTPException(status_code=400, detail="文件种类只能是 image、video 或 audio")
+    payload = file.file.read()
+    if not payload:
+        raise HTTPException(status_code=400, detail="文件是空的")
+    suffix = Path(file.filename or "media.bin").suffix.lower() or ".bin"
+    if len(suffix) > 8 or not suffix.startswith(".") or "/" in suffix or "\\" in suffix:
+        suffix = ".bin"
+    name = Path(file.filename or "素材").stem
+    if kind == "image":
+        if role not in ROLES:
+            raise HTTPException(status_code=400, detail="参考用途不在原型里")
+        key = storage.put("references", f"{secrets.token_hex(8)}{suffix}", payload, file.content_type or "application/octet-stream")
+        entity = store.add_entity("Reference", {"title": title or name, "role": role, "take": "", "ignore": ""}, key)
+    else:
+        key = storage.put("clips", f"{secrets.token_hex(8)}{suffix}", payload, file.content_type or "application/octet-stream")
+        entity = store.add_entity("Clip", {"title": title or name, "duration": 0}, key)
+    store.record("media upload", {"id": entity["id"], "kind": kind})
+    return entity
+
+
+@app.post("/api/frame")
+def extract_frame(body: JobIn, authorization: str | None = Header(default=None)) -> dict:
+    require_agent(authorization)
+    at = (body.detail or {}).get("at") or "last"
+    role = (body.detail or {}).get("role") or "空间"
+    if at not in {"first", "last"}:
+        raise HTTPException(status_code=400, detail="抽帧位置只能是 first 或 last")
+    if role not in {"首帧", "尾帧", "空间"}:
+        raise HTTPException(status_code=400, detail="抽帧用途只能是首帧、尾帧或空间")
+    return runner.start("frame", body.target_id, {"at": at, "role": role})
+
+
+@app.post("/api/image")
+def image_job(body: JobIn, authorization: str | None = Header(default=None)) -> dict:
+    require_agent(authorization)
+    from .providers import configured
+
+    if not configured(store, "image"):
+        raise HTTPException(status_code=400, detail="生图还没有配置，不能提交")
+    return runner.start("image", body.target_id, body.detail)
+
+
+@app.post("/api/music")
+def music_job(body: JobIn, authorization: str | None = Header(default=None)) -> dict:
+    require_agent(authorization)
+    from .providers import configured
+
+    if not configured(store, "music"):
+        raise HTTPException(status_code=400, detail="生音乐还没有配置，不能提交")
+    return runner.start("music", body.target_id, body.detail)
+
+
+@app.post("/api/check")
+def check_clip(body: JobIn, authorization: str | None = Header(default=None)) -> dict:
+    require_agent(authorization)
+    return runner.start("check", body.target_id, body.detail)
+
+
+@app.post("/api/reference")
+def upload_reference(
+    file: UploadFile = File(...),
+    role: str = Form(...),
+    title: str = Form(""),
+    take: str = Form(""),
+    ignore: str = Form(""),
+    authorization: str | None = Header(default=None),
+) -> dict:
+    require_agent(authorization)
+    from .ontology import ROLES
+
+    if role not in ROLES:
+        raise HTTPException(status_code=400, detail="参考用途不在原型里")
+    payload = file.file.read()
+    if not payload:
+        raise HTTPException(status_code=400, detail="参考文件是空的")
+    suffix = Path(file.filename or "ref.bin").suffix.lower() or ".bin"
+    if len(suffix) > 8 or not suffix.startswith(".") or "/" in suffix or "\\" in suffix:
+        suffix = ".bin"
+    key = storage.put("references", f"{secrets.token_hex(8)}{suffix}", payload, file.content_type or "application/octet-stream")
+    entity = store.add_entity("Reference", {
+        "title": title or Path(file.filename or "参考").stem,
+        "role": role,
+        "take": take,
+        "ignore": ignore,
+    }, key)
+    store.record("reference upload", {"id": entity["id"]})
+    return entity
 
 
 @app.post("/api/ffmpeg")
@@ -425,18 +550,36 @@ def job_show(job_id: str, authorization: str | None = Header(default=None)) -> d
 def preview(entity_id: str, authorization: str | None = Header(default=None)) -> dict:
     require_agent(authorization)
     entity = store.get_entity(entity_id)
-    jobs = store.jobs_for(entity_id)
     sheet = ""
-    for job in jobs:
-        if job["detail"].get("sheet_key"):
-            sheet = storage.signed_url(job["detail"]["sheet_key"], PUBLIC)
-            break
+    matched = None
+    for job in store.list_jobs():
+        detail = job.get("detail") or {}
+        owns = job["target_id"] == entity_id or detail.get("clip_id") == entity_id
+        if not owns:
+            continue
+        if matched is None:
+            matched = job
+        if detail.get("sheet_key") and not sheet:
+            sheet = storage.signed_url(detail["sheet_key"], PUBLIC)
+            matched = job
+    status = "未生成"
+    if matched:
+        if matched["kind"] == "generate" and matched["target_id"]:
+            status = _status(matched["target_id"], store.list_jobs())
+        elif matched["status"] == "succeeded":
+            status = "已成片"
+        elif matched["status"] in {"queued", "running"}:
+            status = "排队"
+        elif matched["status"] == "unknown":
+            status = "提交不明"
+        elif matched["status"] == "failed":
+            status = "失败"
     return {
         "id": entity_id,
         "title": entity["data"].get("title"),
         "preview_url": storage.signed_url(entity.get("object_key"), PUBLIC),
         "sheet_url": sheet,
-        "status": _status(entity_id, store.list_jobs()),
+        "status": status,
     }
 
 
@@ -479,6 +622,13 @@ def batch(work_id: str, authorization: str | None = Header(default=None)) -> dic
 class PlatformIn(BaseModel):
     name: str
     note: str = ""
+
+
+class ProviderIn(BaseModel):
+    capability: str
+    base: str
+    key: str = ""
+    workflow: str
 
 
 class AdminIn(BaseModel):
@@ -605,6 +755,24 @@ def platform_list(authorization: str | None = Header(default=None)) -> dict:
 def _settings_like(prefix: str) -> list[tuple[str, str]]:
     rows = store.conn.execute("SELECT key, value FROM settings WHERE key LIKE ?", (prefix + "%",)).fetchall()
     return [(row["key"], row["value"]) for row in rows]
+
+
+@app.get("/api/settings/providers")
+def provider_list(authorization: str | None = Header(default=None)) -> dict:
+    require_admin(authorization)
+    return {"items": public_view(store)}
+
+
+@app.post("/api/settings/providers")
+def provider_save(body: ProviderIn, authorization: str | None = Header(default=None)) -> dict:
+    require_admin(authorization)
+    try:
+        save_provider(store, body.capability, body.base, body.key, body.workflow)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    saved = next(item for item in public_view(store) if item["capability"] == body.capability)
+    store.record("provider save", {"capability": body.capability, "configured": saved["configured"]})
+    return saved
 
 
 @app.post("/api/settings/passthrough")

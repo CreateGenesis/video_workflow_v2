@@ -51,10 +51,16 @@ class ToolPackageTests(unittest.TestCase):
                 with zipfile.ZipFile(out / item["filename"]) as archive:
                     names = set(archive.namelist())
                     note = archive.read("使用说明.txt").decode("utf-8")
+                    index = archive.read("skills/cvgen-index.md").decode("utf-8")
                 self.assertNotIn("cvgen.cmd", names)
                 self.assertNotIn("cvgen.ps1", names)
                 self.assertNotIn("requirements-cli.txt", names)
                 self.assertFalse(any(name.endswith(".whl") for name in names))
+                self.assertIn("skills/cvgen-index.md", names)
+                self.assertIn("cvgen skill show", note)
+                self.assertIn("cvgen skill show", index)
+                self.assertNotIn("http://", index)
+                self.assertNotIn("https://", index)
                 self.assertNotIn("setup", note)
                 if platform == "windows":
                     self.assertIn("cvgen.exe", names)
