@@ -261,7 +261,7 @@ export function TaskDetailSheet({ taskId, onClose }) {
   const task = detail.data;
   return (
     <Sheet open={Boolean(taskId)} onOpenChange={(open) => (!open ? onClose() : null)} title={task ? `${kindLabel(task.kind)}任务` : "任务"} className="max-w-xl">
-      {detail.isLoading ? (
+      {!detail.data && detail.isLoading ? (
         <div className="p-4">
           <SkeletonRows rows={5} />
         </div>

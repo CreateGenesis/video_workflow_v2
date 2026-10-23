@@ -1,5 +1,5 @@
-import { Suspense, useState } from "react";
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
+import { useState } from "react";
+import { NavLink, Outlet, useNavigate } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Boxes,
@@ -212,28 +212,12 @@ function Brand({ collapsed }) {
   );
 }
 
-function PageFallback() {
-  return (
-    <div className="space-y-4">
-      <Skeleton className="h-7 w-48" />
-      <Skeleton className="h-4 w-80" />
-      <div className="grid gap-3 sm:grid-cols-3">
-        <Skeleton className="h-24" />
-        <Skeleton className="h-24" />
-        <Skeleton className="h-24" />
-      </div>
-      <Skeleton className="h-64" />
-    </div>
-  );
-}
-
 export function AppLayout() {
   const { can } = useSession();
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("cvgen.nav") === "collapsed");
   const [menuOpen, setMenuOpen] = useState(false);
   const connected = useLiveUpdates(true);
   const attention = useAttentionCount(can("queue:read"));
-  const location = useLocation();
 
   const toggle = () => {
     const next = !collapsed;
@@ -280,9 +264,7 @@ export function AppLayout() {
           <UserMenu />
         </header>
         <main className="mx-auto w-full max-w-[1400px] flex-1 px-3 py-5 sm:px-6 sm:py-6">
-          <Suspense fallback={<PageFallback />} key={location.pathname.split("/")[1]}>
-            <Outlet />
-          </Suspense>
+          <Outlet />
         </main>
       </div>
 

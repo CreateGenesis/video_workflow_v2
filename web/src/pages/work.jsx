@@ -99,7 +99,7 @@ export default function WorkPage() {
           <Storyboard workId={workId} />
         </TabsContent>
         <TabsContent value="graph">
-          {work.isLoading ? (
+          {!work.data && work.isLoading ? (
             <Skeleton className="h-[560px] w-full" />
           ) : (
             <Suspense fallback={<Skeleton className="h-[560px] w-full" />}>
@@ -167,7 +167,7 @@ function PromptVersions({ shotId, count }) {
       <button type="button" className="mb-2 text-xs text-primary hover:underline" onClick={() => setOpen(true)}>
         {open ? "已加载" : "加载全部版本"}
       </button>
-      {versions.isLoading ? <p className="text-xs text-muted-foreground">加载中…</p> : null}
+      {!versions.data && versions.isLoading ? <p className="text-xs text-muted-foreground">加载中…</p> : null}
       {versions.isError ? <InlineError>{versions.error.message}</InlineError> : null}
       {versions.data?.versions?.length ? (
         <ol className="space-y-2">
@@ -318,7 +318,7 @@ export function ActivityList({ workId, runId }) {
     getNextPageParam: (last) => (last.items.length === 50 ? last.next_before : undefined),
   });
   const [everything, setEverything] = useState(false);
-  if (feed.isLoading) return <SkeletonRows rows={6} />;
+  if (!feed.data && feed.isLoading) return <SkeletonRows rows={6} />;
   if (feed.isError) return <ErrorState error={feed.error} retry={feed.refetch} />;
   const all = feed.data.pages.flatMap((page) => page.items);
   if (!all.length) return <EmptyState compact icon={ListChecks} title="还没有活动" description="每一次写操作都会记一条，带上操作者。" />;
@@ -494,7 +494,7 @@ function Notes({ workId, workspaceId }) {
 
 function WorkTasks({ query }) {
   const [filter, setFilter] = useState("all");
-  if (query.isLoading) return <SkeletonRows rows={4} />;
+  if (!query.data && query.isLoading) return <SkeletonRows rows={4} />;
   const tasks = query.data?.tasks || [];
   const shown = tasks.filter((task) =>
     filter === "attention" ? ["needs_attention", "waiting"].includes(task.status) : filter === "open" ? OPEN_TASK.includes(task.status) : true,

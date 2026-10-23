@@ -88,7 +88,7 @@ function ApproveCode({ code }) {
     meta: { inline: true },
   });
 
-  if (device.isLoading) {
+  if (!device.data && device.isLoading) {
     return (
       <Shell>
         <div className="space-y-3">

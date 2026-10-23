@@ -36,7 +36,7 @@ export default function QueuePage() {
   return (
     <div className="space-y-5">
       <PageHeader title="队列" description="所有运行与 agent 探索任务共用一个队列，按资源池控制并发。数据实时刷新。" />
-      {queue.isLoading ? (
+      {!data && queue.isLoading ? (
         <SkeletonRows rows={6} />
       ) : (
         <>

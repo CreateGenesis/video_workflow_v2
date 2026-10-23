@@ -34,7 +34,7 @@ export default function LoginPage() {
         </div>
       </div>
       <div className="w-full max-w-sm rounded-xl border bg-card p-6 shadow-sm">
-        {status.isLoading ? (
+        {!status.data && status.isLoading ? (
           <div className="space-y-3">
             <Skeleton className="h-6 w-24" />
             <Skeleton className="h-9 w-full" />

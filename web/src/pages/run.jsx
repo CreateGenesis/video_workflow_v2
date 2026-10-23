@@ -74,7 +74,7 @@ export default function RunPage() {
       </div>
     );
   }
-  if (run.isLoading) {
+  if (!data && run.isLoading) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-8 w-72" />
@@ -770,7 +770,7 @@ function ItemCard({ task, run, title }) {
 
 function ArtifactThumb({ id }) {
   const info = useQuery({ queryKey: ["artifact", id], queryFn: () => api.get(`/api/artifacts/${id}`), staleTime: 30 * 60_000 });
-  if (info.isLoading) return <Skeleton className="aspect-video w-full" />;
+  if (!info.data && info.isLoading) return <Skeleton className="aspect-video w-full" />;
   if (info.isError) return <div className="flex aspect-video items-center justify-center rounded-md border text-xs text-muted-foreground">无法预览</div>;
   return <Thumb artifact={info.data} label={info.data.label} />;
 }

@@ -44,7 +44,7 @@ export default function RunNewPage() {
   return (
     <div>
       <PageHeader title="发起运行" back={{ to: "/runs", label: "运行" }} description="选择已发布的工作流，填写输入。可以一次提交多组输入（批量）。" />
-      {workflows.isLoading ? (
+      {!workflows.data && (workflows.isLoading || workflows.isPending) ? (
         <SkeletonRows rows={3} />
       ) : workflows.isError ? (
         <ErrorState error={workflows.error} retry={workflows.refetch} />
@@ -129,7 +129,7 @@ function RunForm({ workflow }) {
     },
   });
 
-  if (detail.isLoading || rows === null) return <SkeletonRows rows={4} />;
+  if ((!detail.data && detail.isLoading) || rows === null) return <SkeletonRows rows={4} />;
   if (detail.isError) return <ErrorState error={detail.error} retry={detail.refetch} />;
 
   const active = batch ? rows : rows.slice(0, 1);

@@ -7,7 +7,7 @@ import { Pools } from "@/pages/queue";
 export default function PoolsTab() {
   const { can } = useSession();
   const queue = useQuery({ queryKey: ["queue"], queryFn: () => api.get("/api/queue") });
-  if (queue.isLoading) return <SkeletonCards count={6} />;
+  if (!queue.data && queue.isLoading) return <SkeletonCards count={6} />;
   if (queue.isError) return <ErrorState error={queue.error} retry={queue.refetch} />;
   return (
     <div className="space-y-3">

@@ -31,7 +31,12 @@ export function GettingStarted() {
     queryFn: () => api.get(`/api/runs${qs({ workspace_id: workspaceId, limit: 1 })}`),
     enabled: can("runs:read") && Boolean(workspaceId),
   });
-  if (hidden || providers.isLoading || devices.isLoading || workflows.isLoading) return null;
+  if (hidden) return null;
+  const waiting =
+    (!providers.data && (providers.isLoading || providers.isPending)) ||
+    (!devices.data && (devices.isLoading || devices.isPending)) ||
+    (!workflows.data && (workflows.isLoading || workflows.isPending));
+  if (waiting) return null;
 
   const kinds = new Set((providers.data?.items || []).filter((item) => item.enabled).map((item) => item.kind));
   const missingKinds = [["llm", "大模型"], ["image", "生图"], ["video", "视频"]].filter(([kind]) => !kinds.has(kind)).map(([, label]) => label);

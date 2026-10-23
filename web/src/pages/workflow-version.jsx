@@ -85,7 +85,7 @@ export default function WorkflowVersionPage() {
         }
         actions={data ? <VersionActions id={id} version={version} data={data} name={name} /> : null}
       />
-      {detail.isLoading ? (
+      {!data && detail.isLoading ? (
         <SkeletonRows rows={6} />
       ) : (
         <Tabs value={tab} onValueChange={(value) => setParams(value === "overview" ? {} : { tab: value }, { replace: true })}>
@@ -618,7 +618,7 @@ function DiffView({ id, version, versions, previous }) {
         <Select className="w-32" value={base} onChange={(event) => setBase(Number(event.target.value))} options={others.map((item) => ({ value: item.version, label: `v${item.version}` }))} />
         <span className="text-muted-foreground">→ v{version}</span>
       </div>
-      {diff.isLoading ? (
+      {!diff.data && diff.isLoading ? (
         <SkeletonRows rows={4} />
       ) : diff.isError ? (
         <ErrorState error={diff.error} retry={diff.refetch} />

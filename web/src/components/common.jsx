@@ -191,11 +191,13 @@ export function SkeletonCards({ count = 3, className }) {
   );
 }
 
-/** Loading → skeleton, error → ErrorState, else children(data). */
+/** First load → skeleton, error with nothing to show → ErrorState, else children(data).
+ * A disabled query (workspace not chosen yet) stays on the skeleton instead of flashing an empty list. */
 export function QueryView({ query, skeleton, children }) {
-  if (query.isLoading) return skeleton ?? <SkeletonRows />;
-  if (query.isError) return <ErrorState error={query.error} retry={() => query.refetch()} />;
-  return children(query.data);
+  const shown = query.data;
+  if (query.isError && !shown) return <ErrorState error={query.error} retry={() => query.refetch()} />;
+  if (!shown) return skeleton ?? <SkeletonRows />;
+  return children(shown);
 }
 
 /* ---------- confirm ---------- */

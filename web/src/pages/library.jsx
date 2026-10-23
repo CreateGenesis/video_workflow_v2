@@ -134,7 +134,7 @@ function AssetDialog({ item, workspaceId, kindLabel, onClose }) {
           </DialogDescription>
         </DialogHeader>
         <DialogBody className="space-y-2">
-          {detail.isLoading ? (
+          {!detail.data && detail.isLoading ? (
             <SkeletonRows rows={2} />
           ) : (
             (detail.data?.versions || []).map((version, index) => (

@@ -4,30 +4,36 @@ import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useNavigat
 import { MutationCache, QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { AppLayout } from "@/components/layout";
 import { ConfirmProvider } from "@/components/common";
-import { Skeleton, TooltipProvider } from "@/components/ui/misc";
+import { TooltipProvider } from "@/components/ui/misc";
 import { Toaster, toast } from "@/components/ui/toast";
 import { onUnauthorized, uiFlags } from "@/lib/api";
 import { CONSOLE_ROUTES } from "@/lib/routes";
-import { SessionProvider, useAuthStatus } from "@/lib/session";
+import { SessionProvider, useAuthStatus, writeAuthHint } from "@/lib/session";
 import "./styles.css";
 
-const PAGES = {
-  login: lazy(() => import("@/pages/login")),
-  approve: lazy(() => import("@/pages/approve")),
-  dashboard: lazy(() => import("@/pages/dashboard")),
-  explore: lazy(() => import("@/pages/explore")),
-  work: lazy(() => import("@/pages/work")),
-  workflows: lazy(() => import("@/pages/workflows")),
-  workflow: lazy(() => import("@/pages/workflow")),
-  "workflow-version": lazy(() => import("@/pages/workflow-version")),
-  runs: lazy(() => import("@/pages/runs")),
-  "run-new": lazy(() => import("@/pages/run-new")),
-  run: lazy(() => import("@/pages/run")),
-  queue: lazy(() => import("@/pages/queue")),
-  library: lazy(() => import("@/pages/library")),
-  settings: lazy(() => import("@/pages/settings")),
-  "not-found": lazy(() => import("@/pages/not-found")),
+const LOADERS = {
+  login: () => import("@/pages/login"),
+  approve: () => import("@/pages/approve"),
+  dashboard: () => import("@/pages/dashboard"),
+  explore: () => import("@/pages/explore"),
+  work: () => import("@/pages/work"),
+  workflows: () => import("@/pages/workflows"),
+  workflow: () => import("@/pages/workflow"),
+  "workflow-version": () => import("@/pages/workflow-version"),
+  runs: () => import("@/pages/runs"),
+  "run-new": () => import("@/pages/run-new"),
+  run: () => import("@/pages/run"),
+  queue: () => import("@/pages/queue"),
+  library: () => import("@/pages/library"),
+  settings: () => import("@/pages/settings"),
+  "not-found": () => import("@/pages/not-found"),
 };
+const PAGES = Object.fromEntries(Object.entries(LOADERS).map(([name, load]) => [name, lazy(load)]));
+
+// Start every console chunk while auth is in flight, so opening a page does not flash a second loader.
+function warmPages() {
+  for (const load of Object.values(LOADERS)) load();
+}
 
 const queryClient = new QueryClient({
   // Failed actions show the server's detail as a toast, unless the form shows it inline (meta.inline)
@@ -40,23 +46,17 @@ const queryClient = new QueryClient({
   }),
   defaultOptions: {
     queries: {
-      refetchOnWindowFocus: true,
-      staleTime: 5_000,
+      // Focus and live events must not blank a page that already has data.
+      refetchOnWindowFocus: false,
+      staleTime: 15_000,
+      placeholderData: (previous) => previous,
       retry: (count, error) => (error?.status === 0 || error?.status >= 500) && count < 2,
     },
   },
 });
 
 function FullScreenLoading() {
-  return (
-    <div className="flex min-h-dvh items-center justify-center">
-      <div className="w-64 space-y-3">
-        <Skeleton className="mx-auto size-10 rounded-lg" />
-        <Skeleton className="h-4 w-full" />
-        <Skeleton className="h-4 w-2/3" />
-      </div>
-    </div>
-  );
+  return <div className="min-h-dvh bg-[#202020]" aria-busy="true" />;
 }
 
 function UnauthorizedRedirect() {
@@ -66,6 +66,7 @@ function UnauthorizedRedirect() {
   useEffect(() => {
     onUnauthorized(() => {
       if (window.location.pathname.startsWith("/login")) return;
+      writeAuthHint(null);
       client.setQueryData(["auth-status"], (old) => (old ? { ...old, signed_in: false, me: null } : old));
       const next = window.location.pathname + window.location.search;
       navigate(`/login?next=${encodeURIComponent(next)}`, { replace: true });
@@ -77,7 +78,11 @@ function UnauthorizedRedirect() {
 function RequireSession() {
   const status = useAuthStatus();
   const location = useLocation();
-  if (status.isLoading) return <FullScreenLoading />;
+  // placeholderData keeps isLoading false after a reload, so this only covers a cold first visit.
+  useEffect(() => {
+    if (status.data?.signed_in) warmPages();
+  }, [status.data?.signed_in]);
+  if (status.isLoading && !status.data) return <FullScreenLoading />;
   if (status.isError) {
     return (
       <div className="flex min-h-dvh items-center justify-center p-6 text-center">
@@ -103,10 +108,10 @@ function RequireSession() {
 }
 
 function LazyPage({ name }) {
-  const Page = PAGES[name];
+  const View = PAGES[name];
   return (
-    <Suspense fallback={<FullScreenLoading />}>
-      <Page />
+    <Suspense fallback={null}>
+      <View />
     </Suspense>
   );
 }

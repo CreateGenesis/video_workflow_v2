@@ -23,7 +23,7 @@ export default function Dashboard() {
   const attention = useQuery({
     queryKey: ["tasks", "attention", workspaceId],
     queryFn: () => api.get("/api/tasks?status=needs_attention,waiting&limit=50"),
-    enabled: can("queue:read"),
+    enabled: can("queue:read") && Boolean(workspaceId),
   });
   const runs = useQuery({
     queryKey: ["runs", "recent", workspaceId],
@@ -75,8 +75,8 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard label="等我处理" value={can("queue:read") ? attentionItems.length : "—"} hint="闸门审批与异常任务" icon={BellRing} tone="amber" to="/queue" />
         <StatCard label="进行中的运行" value={can("runs:read") ? activeRuns : "—"} hint="最近 8 条中" icon={Clapperboard} tone="blue" to="/runs?status=running,waiting,paused" />
-        <StatCard label="今日花费" value={costs.isLoading ? "…" : yuan(today, { digits: 2 })} hint="本工作区，按入账时间" icon={Wallet} />
-        <StatCard label="本月花费" value={costs.isLoading ? "…" : yuan(month, { digits: 2 })} hint={`${now.getMonth() + 1} 月累计`} icon={CalendarDays} />
+        <StatCard label="今日花费" value={!costs.data && (costs.isLoading || costs.isPending) ? "…" : yuan(today, { digits: 2 })} hint="本工作区，按入账时间" icon={Wallet} />
+        <StatCard label="本月花费" value={!costs.data && (costs.isLoading || costs.isPending) ? "…" : yuan(month, { digits: 2 })} hint={`${now.getMonth() + 1} 月累计`} icon={CalendarDays} />
       </div>
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
@@ -95,7 +95,7 @@ export default function Dashboard() {
                   </Link>
                 </Button>
               </CardHeader>
-              {attention.isLoading ? (
+              {!attention.data && (attention.isLoading || attention.isPending) ? (
                 <CardContent>
                   <SkeletonRows rows={2} />
                 </CardContent>
@@ -128,7 +128,7 @@ export default function Dashboard() {
                   </Link>
                 </Button>
               </CardHeader>
-              {runs.isLoading ? (
+              {!runs.data && (runs.isLoading || runs.isPending) ? (
                 <CardContent>
                   <SkeletonRows rows={3} />
                 </CardContent>
@@ -192,7 +192,7 @@ export default function Dashboard() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-3">
-                {pools.isLoading ? (
+                {!pools.data && pools.isLoading ? (
                   <SkeletonRows rows={4} />
                 ) : pools.isError ? (
                   <ErrorState error={pools.error} retry={pools.refetch} />
@@ -229,7 +229,7 @@ export default function Dashboard() {
                 <Coins className="size-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                {costs.isLoading ? (
+                {!costs.data && (costs.isLoading || costs.isPending) ? (
                   <SkeletonRows rows={3} />
                 ) : costs.isError ? (
                   <ErrorState error={costs.error} retry={costs.refetch} />

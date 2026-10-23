@@ -31,6 +31,8 @@ test("every §9.3 module has a distinct shipped route and page module", () => {
   assert.match(main, /CONSOLE_ROUTES\.map/);
   assert.match(main, /BrowserRouter/);
   assert.match(main, /QueryClientProvider/);
+  assert.match(main, /dashboard: \(\) => import\("@\/pages\/dashboard"\)/);
+  assert.match(main, /function warmPages/);
   const layout = read("src/components/layout.jsx");
   assert.match(layout, /useLiveUpdates/);
   const session = read("src/lib/session.jsx");

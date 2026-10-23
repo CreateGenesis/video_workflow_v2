@@ -61,7 +61,7 @@ export default function WorkflowPage() {
           <CardTitle>版本</CardTitle>
           <span className="text-[13px] text-muted-foreground">发布后的版本不可修改；运行钉死版本</span>
         </CardHeader>
-        {workflow.isLoading ? (
+        {!data && workflow.isLoading ? (
           <div className="p-4">
             <SkeletonRows rows={3} />
           </div>
@@ -140,7 +140,7 @@ export default function WorkflowPage() {
               <Link to={`/runs?workflow=${id}`}>全部</Link>
             </Button>
           </CardHeader>
-          {runs.isLoading ? (
+          {!runs.data && (runs.isLoading || runs.isPending) ? (
             <div className="p-4">
               <SkeletonRows rows={2} />
             </div>
