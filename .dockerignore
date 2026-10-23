@@ -1,0 +1,11 @@
+.git
+.claude
+.venv
+data
+runs
+tmp
+**/__pycache__
+web/node_modules
+web/dist
+cvgen-cli/target
+video_workflow_resource

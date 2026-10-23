@@ -7,12 +7,30 @@ import time
 from datetime import timedelta
 
 import httpx
-from sqlalchemy import text, update
+from sqlalchemy import select, text, update
 
 from .. import db
-from ..security import webhook_signature
+from ..security import decrypt_secret, encrypt_secret, new_webhook_secret, webhook_signature
 
 MAX_ATTEMPTS = 8
+
+
+def global_secret(conn, rotate: bool = False) -> str:
+    stored = db.get_setting(conn, "webhook_secret_enc")
+    if stored and not rotate:
+        return decrypt_secret(stored)
+    secret = new_webhook_secret()
+    db.set_setting(conn, "webhook_secret_enc", encrypt_secret(secret))
+    return secret
+
+
+def signing_secret(conn, signer: str) -> str:
+    kind, _, key_id = signer.partition(":")
+    if kind == "apikey":
+        stored = conn.execute(select(db.api_keys.c.webhook_secret_enc).where(db.api_keys.c.id == key_id)).scalar()
+        if stored:
+            return decrypt_secret(stored)
+    return global_secret(conn)
 
 
 def deliver_due(limit: int = 10) -> int:
@@ -31,7 +49,7 @@ def deliver_due(limit: int = 10) -> int:
                 "User-Agent": "cvgen-webhook",
                 "X-CVGEN-Event": row["event"],
                 "X-CVGEN-Timestamp": str(stamp),
-                "X-CVGEN-Signature": f"sha256={webhook_signature(body, stamp)}",
+                "X-CVGEN-Signature": f"sha256={webhook_signature(body, stamp, signing_secret(conn, row['signer']))}",
             }
             error = ""
             try:

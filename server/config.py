@@ -62,7 +62,7 @@ def get_settings() -> Settings:
         media_url_seconds=int(os.environ.get("CVGEN_MEDIA_URL_SECONDS", "3600")),
         exploration_priority_bonus=int(os.environ.get("CVGEN_EXPLORATION_PRIORITY_BONUS", "10")),
         web_dir=ROOT / "web" / "dist",
-        releases_dir=ROOT / "tools" / "dist",
+        releases_dir=Path(os.environ.get("CVGEN_RELEASES", ROOT / "tools" / "dist")),
     )
 
 

@@ -12,3 +12,5 @@ cvgen-cli/target/
 .venv/
 .cvgen/
 .claude/
+!deploy/.env.example
+deploy/.env

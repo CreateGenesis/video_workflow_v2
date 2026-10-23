@@ -6,8 +6,8 @@
 
 操作：
 
-- `cvgen story` 写入作品、地点、纱布、风格、运镜、情绪和两条参考，并连到 15 秒镜头。
+- 雪原段的地点、纱布、风格、运镜、两张参考已经在素材库：`cvgen asset list` 能看到 `style-snow-film`、`place-siberia-snow`、`detail-gauze-roll`、`camera-one-move`、`ref-zero-space`、`ref-zero-gauze`。
+- 探索时：`cvgen work new 雪原`，`cvgen entity add Shot '{...}'`，再把镜头 `cvgen link` 到这些 `asset:名称@1`。
 - `cvgen shot compose <镜头>` 读四段提示词。确认三拍、纱布特写和“动作从下文重新开始”。
-- 警告为空后再发 `cvgen generate <镜头>`。已排队、已成片或提交不明时，服务会拒绝第二次提交。
-- `cvgen job show <任务>` 读取状态。需要等到结束时发 `cvgen job wait <任务>`，再读成片和接触表。网页画布与 `cvgen canvas` 看同一份镜头、边和任务。
-- 成片入库后 `cvgen check <成片>`。下一镜要用这一镜空间时，发 `cvgen reference frame <成片> --at last --role 空间`。
+- 警告为空后再 `cvgen generate <镜头>`，`cvgen job wait <任务>` 等到结束，再读成片和接触表。
+- 定型后的版本是工作流“小说片段-雪原-15秒”：`cvgen workflow dry-run <工作流id> 1 '{"passage":"原文"}'` 不花钱看到完整提示词。

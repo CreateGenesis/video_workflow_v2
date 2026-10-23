@@ -378,7 +378,9 @@ def _webhook(conn: Connection, run_id: str, event: str) -> None:
         return
     payload = {"event": event, "run_id": run_id, "status": run["status"], "workflow_id": run["workflow_id"],
                "version": run["version"], "batch_id": run["batch_id"]}
-    conn.execute(insert(db.webhook_deliveries).values(run_id=run_id, url=run["callback_url"], event=event, payload=payload))
+    signer = f"apikey:{run['created_by_id']}" if run["created_by_kind"] == "apikey" else "global"
+    conn.execute(insert(db.webhook_deliveries).values(run_id=run_id, url=run["callback_url"], event=event,
+                                                      payload=payload, signer=signer))
 
 
 def task_finished(conn: Connection, task: dict, principal=None) -> None:

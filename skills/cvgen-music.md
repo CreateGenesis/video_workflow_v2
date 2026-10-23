@@ -10,8 +10,8 @@
 
 操作：
 
-- `cvgen music <歌词或文本>`，等任务结束后读取音频成片。
+- `cvgen music <歌词或文本> [--lyrics 歌词] [--duration 秒]`，`cvgen job wait <任务>` 后读取音频成片。
 - `cvgen entity add Line '{"title":"副歌","text":"..."}'`
-- 每条镜头 `cvgen generate <镜头>` 后 `cvgen inspect <成片>`，确认时长再 `cvgen edit join`。
-- `cvgen edit mix <剪辑>` 把配乐混到画面下。
-- 只有明确要求贴字时才 `cvgen edit subtitle <剪辑>`。
+- 每条镜头 `cvgen generate <镜头>` 后 `cvgen inspect <成片>`，确认时长再拼接。
+- `cvgen edit <成片...> --music <配乐成片>` 把配乐混到画面下。
+- 只有明确要求贴字时才加 `--subtitle '["第一句","第二句"]'`。

@@ -8,8 +8,8 @@
 
 操作：
 
-- `cvgen edit join <成片甲> <成片乙>`
-- `cvgen edit export <剪辑>` 导出已连成片和旁白的时间线
-- `cvgen edit mix <剪辑>` 混入已入库配乐。剪辑要先写上 music，有旁白再写 narration
-- `cvgen edit subtitle <剪辑>` 只在 lines 里有台词时使用
-- `cvgen job show <任务>` 读取成片。需要等到结束时发 `cvgen job wait <任务>`
+- 拼接：`cvgen edit <成片甲> <成片乙> --fade 2.5 --title 名称`
+- 混配乐：加 `--music <配乐成片或asset:名称@版本>`，有旁白再加 `--narration <旁白成片>`
+- 贴字：加 `--subtitle '["台词一","台词二"]'`，只在台词必须留在画面上时使用
+- 导出到档位：加 `--export 768p横`
+- `cvgen job wait <任务>` 等到结束，读成片链接；`cvgen media get <文件id> -o 成片.mp4` 下载

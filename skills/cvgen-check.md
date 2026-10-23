@@ -8,7 +8,7 @@
 
 操作：
 
-- `cvgen inspect <成片>`
-- `cvgen check <成片>`
-- `cvgen preview <成片>`
-- `cvgen job show <任务>`
+- `cvgen check <成片>`，`cvgen job wait <任务>` 读 passed、problems 和接触表。
+- `cvgen inspect <成片>` 量响度和声音。
+- `cvgen media get <文件id> -o <路径>` 下载成片或接触表亲自看。
+- 审计员的意见用 `cvgen review list` 读，处理完 `cvgen review resolve <意见id>`。

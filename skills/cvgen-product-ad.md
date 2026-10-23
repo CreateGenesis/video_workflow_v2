@@ -14,7 +14,8 @@
 
 操作：
 
-- 已有照片用 `cvgen media upload <文件> --kind image --role 细节`。
-- 没有照片时，确认生图已配置，再 `cvgen image <镜头> --role 细节`。连做三次，分别改镜头标题后再提交。
-- `cvgen shot compose <镜头>` 后 `cvgen generate <镜头>`。
-- 需要可控配乐时 `cvgen music <文案>`，再 `cvgen edit mix <剪辑>`。
+- 已有照片：`cvgen upload <文件>`，再 `cvgen entity add Reference '{"title":"主视角","role":"身份"}' --artifact <文件id>`，三张分别入库。
+- 没有照片时 `cvgen image <镜头> --role 细节 --n 2`。要改镜头标题用 `cvgen entity set <镜头> '{"title":"..."}'`。
+- `cvgen shot compose <镜头>` 后 `cvgen generate <镜头>`，`cvgen job wait <任务>`。
+- 需要可控配乐时 `cvgen music <文案>`，再 `cvgen edit <成片...> --music <配乐成片> --export 768p横`。
+- 这一套跑顺后按 `cvgen-workflow` 定型成工作流；产品广告示例工作流可以先 `cvgen workflow list` 看。

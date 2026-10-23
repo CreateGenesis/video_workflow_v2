@@ -8,7 +8,6 @@
 
 操作：
 
-- 本机片子用 `cvgen media upload <文件> --kind video`，网上片子用 `cvgen learn <地址>`
-- `cvgen job show <任务>` 拿到入库后的实体
-- `cvgen reverse <实体>`
-- 读草案和接触表。确认后再按 `cvgen-h3-prompt` 写镜头
+- 本机片子：`cvgen upload <文件>`，再 `cvgen entity add Clip '{"title":"参考片"}' --artifact <文件id>`；网上片子：`cvgen pull <地址> --learn`。
+- `cvgen inspect <实体> --mode reverse`，`cvgen job wait <任务>` 读草案、测量和接触表链接（`cvgen media get <文件id> -o 接触表.jpg` 下载来看）。
+- 确认后再按 `cvgen-h3-prompt` 写镜头。

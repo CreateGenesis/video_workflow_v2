@@ -37,7 +37,9 @@ class Receiver(BaseHTTPRequestHandler):
 
 def _key(admin, workspace_id: str, scopes: list[str]) -> Api:
     created = admin.post("/api/admin/keys", {"name": "下游", "workspace_id": workspace_id, "scopes": scopes})
-    return Api(TestClient(app), {"Authorization": f"Bearer {created['key']}"})
+    api = Api(TestClient(app), {"Authorization": f"Bearer {created['key']}"})
+    api.webhook_secret = created["webhook_secret"]
+    return api
 
 
 def test_service_api_end_to_end(admin, fresh, mock_providers):
@@ -86,7 +88,9 @@ def test_service_api_end_to_end(admin, fresh, mock_providers):
     assert "run.started" in events and "run.succeeded" in events
     sample = Receiver.received[-1]
     stamp = int(sample["headers"]["X-CVGEN-Timestamp"])
-    assert sample["headers"]["X-CVGEN-Signature"] == f"sha256={webhook_signature(sample['body'], stamp)}"
+    assert sample["headers"]["X-CVGEN-Signature"] == f"sha256={webhook_signature(sample['body'], stamp, service.webhook_secret)}"
+    assert "webhook_secret_enc" not in admin.get("/api/admin/keys")["items"][0]
+    assert admin.get("/api/admin/webhook-secret")["webhook_secret"].startswith("whsec_")
 
     other = _key(admin, fresh["workspace_id"], ["runs:read"])
     other.request("GET", f"/v1/runs/{first['id']}", expect=404)

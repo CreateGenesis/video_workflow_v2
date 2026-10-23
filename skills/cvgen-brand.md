@@ -8,7 +8,7 @@
 
 操作：
 
-- `cvgen media upload <产品图> --kind image --role 细节`
+- `cvgen upload <产品图>` 后 `cvgen entity add Reference '{"title":"产品正面","role":"身份","take":"产品外形和标识","ignore":"背景"}' --artifact <文件id>`
 - `cvgen entity add Style '{"title":"品牌宣传","medium":"真人电影感","grade":"统一光线和调色","ban":"禁止定格、仿造标识、字幕和水印"}'`
 - `cvgen link styled_as <镜头> <风格>`
 - `cvgen shot compose <镜头>` 确认五拍和主动作后再 `cvgen generate <镜头>`

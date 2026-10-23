@@ -14,6 +14,6 @@
 
 操作：
 
-- 首帧或尾帧参考用 `cvgen reference upload <文件> --role 首帧` 或 `--role 尾帧`。
-- 上一镜已经入库时，用 `cvgen reference frame <成片> --at last --role 空间` 抽真实尾帧。
-- `cvgen link references <镜头> <参考>` 后再 `cvgen shot compose <镜头>`。确认对齐句在提示词开头，再 `cvgen generate <镜头>`。
+- 首帧或尾帧参考：`cvgen upload <文件>` 拿到文件 id，再 `cvgen entity add Reference '{"title":"首帧","role":"首帧","take":"构图和主体位置","ignore":"多余文字"}' --artifact <文件id>`。
+- 上一镜已经入库时，`cvgen frame <成片> --at last --role 空间` 抽真实尾帧。
+- `cvgen link references <镜头> <参考>` 后再 `cvgen shot compose <镜头>`。确认对齐句在提示词开头，再 `cvgen generate <镜头>`，`cvgen job wait <任务>` 等到结束。

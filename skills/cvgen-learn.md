@@ -6,5 +6,6 @@
 
 操作：
 
-- `cvgen learn <视频地址>`
-- `cvgen job show <任务>`
+- `cvgen pull <视频地址> --learn`
+- `cvgen job wait <任务>` 读入库后的实体和观察
+- 需要画面测量时 `cvgen inspect <实体> --mode reverse`

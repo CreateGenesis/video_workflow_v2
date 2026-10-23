@@ -8,7 +8,8 @@
 
 操作：
 
-- `cvgen reference frame <上一镜成片> --at last --role 空间`
+- `cvgen frame <上一镜成片> --at last --role 空间`，`cvgen job wait <任务>` 拿到参考实体 id。
 - `cvgen link references <下一镜> <抽出的参考>`
-- 需要锁结尾时再 `cvgen reference frame <目标成片> --at last --role 尾帧`，或上传一张尾帧。
+- 需要锁结尾时 `cvgen frame <目标成片> --at last --role 尾帧`，或上传一张尾帧。
 - `cvgen shot compose <下一镜>` 确认对齐句后 `cvgen generate <下一镜>`
+- 定型成工作流时，视频节点写 `"continuity": "previous_last_frame"`，服务会自动串行并接上尾帧。

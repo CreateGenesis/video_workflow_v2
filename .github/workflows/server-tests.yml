@@ -1,0 +1,28 @@
+name: server tests
+
+on:
+  push:
+    branches: [main, v2]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest -q
+        env:
+          CVGEN_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres

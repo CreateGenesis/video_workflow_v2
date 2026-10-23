@@ -8,9 +8,8 @@
 
 操作：
 
-- `cvgen entity add Shot '{...}'`
-- `cvgen reference upload <文件> --role 细节`，或 `cvgen media upload <文件> --kind image --role 细节`
-- `cvgen link references <镜头> <参考>`
-- `cvgen shot compose <镜头>`
-- 警告可以接受时，再发 `cvgen generate <镜头>`
-- `cvgen job show <任务>` 只读已经入库的结果
+- `cvgen entity add Shot '{"title":"...","size":"中景","angle":"平视","action":"...","duration":5}'`
+- 参考图：`cvgen upload <文件>`，再 `cvgen entity add Reference '{"title":"...","role":"细节","take":"...","ignore":"..."}' --artifact <文件id>`；素材库里的参考直接连 `asset:名称@版本`。
+- `cvgen link references <镜头> <参考或asset:名称@版本>`
+- `cvgen shot compose <镜头>`。有警告时先改实体（`cvgen entity set`）；确认警告可以接受再 `cvgen generate <镜头> --force`。
+- `cvgen job wait <任务>` 等到结束，`cvgen job show <任务>` 读成片和接触表链接。

@@ -83,9 +83,14 @@ def media_url(artifact_id: str | None, absolute: bool = False) -> str:
     return f"{get_settings().public_base}{path}" if absolute else path
 
 
-def webhook_signature(body: bytes, timestamp: int) -> str:
+def webhook_signature(body: bytes, timestamp: int, secret: str) -> str:
+    """HMAC-SHA256 over "<timestamp>.<body>" with the receiver's shared secret."""
     message = f"{timestamp}.".encode("utf-8") + body
-    return hmac.new(_key("webhook"), message, hashlib.sha256).hexdigest()
+    return hmac.new(secret.encode("utf-8"), message, hashlib.sha256).hexdigest()
+
+
+def new_webhook_secret() -> str:
+    return "whsec_" + secrets.token_urlsafe(32)
 
 
 def _fernet() -> Fernet:

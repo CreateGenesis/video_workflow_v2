@@ -1,13 +1,9 @@
-name: cvgen binaries
+name: cvgen CLI release
 
 on:
   workflow_dispatch:
   push:
-    branches: [main]
-    paths:
-      - cvgen-cli/**
-      - tools/build_release.py
-      - .github/workflows/cvgen-binaries.yml
+    tags: ["cli-v*"]
 
 jobs:
   build:
@@ -17,57 +13,41 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-24.04
-            platform: linux
-            target: x86_64-unknown-linux-gnu
-            binary: cvgen
-            archive: cvgen-linux-x64.zip
-          - os: macos-14
-            platform: macos
-            target: x86_64-apple-darwin
-            binary: cvgen
-            archive: cvgen-macos.zip
-          - os: windows-2022
-            platform: windows
-            target: x86_64-pc-windows-msvc
-            binary: cvgen.exe
-            archive: cvgen-windows-x64.zip
+          - {os: ubuntu-24.04, platform: linux, target: x86_64-unknown-linux-gnu, binary: cvgen}
+          - {os: macos-14, platform: macos, target: aarch64-apple-darwin, binary: cvgen}
+          - {os: windows-2022, platform: windows, target: x86_64-pc-windows-msvc, binary: cvgen.exe}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - name: Test and compile
-        shell: bash
-        working-directory: cvgen-cli
-        run: |
-          set -eu
-          cargo test --release --target "${{ matrix.target }}"
-          cargo build --release --target "${{ matrix.target }}"
-          test -f "target/${{ matrix.target }}/release/${{ matrix.binary }}"
-      - name: Pack
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test, build, pack
         shell: bash
         run: |
           set -eu
-          src="cvgen-cli/target/${{ matrix.target }}/release/${{ matrix.binary }}"
-          stage="$(mktemp -d)"
-          if [ "${{ matrix.platform }}" = "windows" ]; then
-            cp "$src" "$stage/cvgen.exe"
-          else
-            cp "$src" "$stage/cvgen"
-            chmod 755 "$stage/cvgen"
-          fi
-          printf '%s\n' 'cvgen 操作工具' '' '解压后直接运行可执行文件。先读 skills/cvgen-index.md。' '登录后用 cvgen skill show <名称> 读取正文。正文在服务端，不在这个压缩包里。' 'Linux / macOS：./cvgen login --base 服务地址' 'Windows：cvgen.exe login --base 服务地址' '' '网页管理员批准设备码后，这台 cvgen 才会在线。同时只能有一台在线。' > "$stage/使用说明.txt"
-          mkdir -p "$stage/skills"
-          cp skills/cvgen-index.md "$stage/skills/cvgen-index.md"
-          # Keep the directory entry so Windows Explorer shows skills/.
-          mkdir -p tools/dist
-          rm -f "tools/dist/${{ matrix.archive }}"
-          (cd "$stage" && zip -X -r "$OLDPWD/tools/dist/${{ matrix.archive }}" .)
-          rm -rf "$stage"
-          test -f "tools/dist/${{ matrix.archive }}"
+          (cd cvgen-cli && cargo test --release --target "${{ matrix.target }}" && cargo build --release --target "${{ matrix.target }}")
+          python tools/build_release.py --out dist --${{ matrix.platform }} "cvgen-cli/target/${{ matrix.target }}/release/${{ matrix.binary }}"
       - uses: actions/upload-artifact@v4
         with:
           name: cvgen-${{ matrix.platform }}
-          path: tools/dist/${{ matrix.archive }}
+          path: dist/*
           if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/cli-v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" dist/* --repo "${GITHUB_REPOSITORY}" --title "${GITHUB_REF_NAME}" --notes "cvgen CLI ${GITHUB_REF_NAME#cli-v}. Put these files in the server's releases directory (CVGEN_RELEASES)."

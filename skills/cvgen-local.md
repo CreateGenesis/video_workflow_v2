@@ -6,8 +6,7 @@
 
 操作：
 
-- `cvgen media upload <图片> --kind image --role 身份`
-- `cvgen media upload <视频> --kind video`
-- `cvgen media upload <音频> --kind audio`
-- `cvgen link references <镜头> <参考>`，或把视频成片放进剪辑
-- 已有 `cvgen reference upload` 仍可用于参考图
+- `cvgen upload <文件> [--label 名称]` 上传，返回文件 id。大文件流式上传，不占内存。
+- 图片作为参考：`cvgen entity add Reference '{"title":"...","role":"身份","take":"...","ignore":"..."}' --artifact <文件id>`
+- 视频或音频作为成片：`cvgen entity add Clip '{"title":"..."}' --artifact <文件id>`
+- `cvgen link references <镜头> <参考>`，或把成片放进 `cvgen edit`

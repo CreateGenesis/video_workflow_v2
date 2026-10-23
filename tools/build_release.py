@@ -1,84 +1,78 @@
-"""Zip native cvgen binaries plus the skill index."""
+"""Zip native cvgen binaries with the operator index and write tools/dist/VERSION.
+
+CI builds each platform and calls this with --only; the server serves whatever is in the releases
+directory (CVGEN_RELEASES, default tools/dist).
+"""
 
 from __future__ import annotations
 
 import argparse
-import os
+import re
 import stat
 import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-NOTE = """cvgen 操作工具
+ARCHIVES = {"linux": ("cvgen-linux-x64.zip", "cvgen"), "macos": ("cvgen-macos.zip", "cvgen"),
+            "windows": ("cvgen-windows-x64.zip", "cvgen.exe")}
+MAGIC = {"linux": (b"\x7fELF",), "windows": (b"MZ",),
+         "macos": (b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe")}
+NOTE = """cvgen {version} 操作工具
 
-解压后直接运行可执行文件。先读 skills/cvgen-index.md。
-登录后用 cvgen skill show <名称> 读取正文。正文在服务端，不在这个压缩包里。
-Linux / macOS：./cvgen login --base 服务地址
-Windows：cvgen.exe login --base 服务地址
+1. 解压后运行可执行文件，先登录：
+   Linux / macOS：./cvgen login --base 服务地址
+   Windows：cvgen.exe login --base 服务地址
+   终端会显示一个设备码和链接。登录网页后打开链接批准，这台设备就归属批准它的人。
+2. 选择工作区和作品：cvgen workspace list → cvgen workspace use <id> → cvgen work new <名称>
+3. 读 skills/cvgen-index.md；正文用 cvgen skill show <名称> 读取。
 
-网页管理员批准设备码后，这台 cvgen 才会在线。同时只能有一台在线。
+cvgen --help 列出全部命令；任何命令后加 --help 只显示用法，不会执行。
 """
+
+
+def cli_version() -> str:
+    text = (ROOT / "cvgen-cli" / "Cargo.toml").read_text(encoding="utf-8")
+    return re.search(r'^version\s*=\s*"([^"]+)"', text, re.M).group(1)
 
 
 def _add(archive: zipfile.ZipFile, name: str, payload: bytes, executable: bool = False) -> None:
     info = zipfile.ZipInfo(name)
     info.flag_bits |= 0x800
-    mode = stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH
-    if not executable:
-        mode = stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH
-    info.external_attr = mode << 16
-    archive.writestr(info, payload)
+    mode = 0o755 if executable else 0o644
+    info.external_attr = (stat.S_IFREG | mode) << 16
+    archive.writestr(info, payload, compress_type=zipfile.ZIP_DEFLATED)
 
 
-def _add_dir(archive: zipfile.ZipFile, name: str) -> None:
-    info = zipfile.ZipInfo(name if name.endswith("/") else f"{name}/")
-    info.flag_bits |= 0x800
-    info.external_attr = (stat.S_IFDIR | 0o755) << 16
-    archive.writestr(info, b"")
-
-
-def package(out: Path, binaries: dict[str, Path]) -> list[Path]:
+def package(out: Path, binaries: dict[str, Path], version: str) -> list[Path]:
     out.mkdir(parents=True, exist_ok=True)
-    specs = {
-        "cvgen-linux-x64.zip": ("cvgen", binaries["linux"]),
-        "cvgen-macos.zip": ("cvgen", binaries["macos"]),
-        "cvgen-windows-x64.zip": ("cvgen.exe", binaries["windows"]),
-    }
-    selected = os.environ.get("CVGEN_PACK_ONLY", "")
+    index = (ROOT / "skills" / "cvgen-index.md").read_bytes()
     written = []
-    for filename, (name, source) in specs.items():
-        platform = {"cvgen-linux-x64.zip": "linux", "cvgen-macos.zip": "macos", "cvgen-windows-x64.zip": "windows"}[filename]
-        if selected and platform != selected:
-            continue
+    for platform, source in binaries.items():
+        filename, name = ARCHIVES[platform]
         data = source.read_bytes()
-        if name.endswith(".exe") and not data.startswith(b"MZ"):
-            raise SystemExit(f"{source} 不是 Windows 可执行文件")
-        if name == "cvgen" and filename.startswith("cvgen-linux") and not data.startswith(b"\x7fELF"):
-            raise SystemExit(f"{source} 不是 Linux 可执行文件")
-        if filename.startswith("cvgen-macos") and data[:4] not in {b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe"}:
-            raise SystemExit(f"{source} 不是 macOS 可执行文件")
+        if not data.startswith(MAGIC[platform]):
+            raise SystemExit(f"{source} 不是 {platform} 可执行文件")
         dest = out / filename
-        index = (ROOT / "skills" / "cvgen-index.md").read_bytes()
-        with zipfile.ZipFile(dest, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        with zipfile.ZipFile(dest, "w") as archive:
             _add(archive, name, data, executable=True)
-            _add(archive, "使用说明.txt", NOTE.encode("utf-8"))
-            _add_dir(archive, "skills")
+            _add(archive, "使用说明.txt", NOTE.format(version=version).encode("utf-8"))
             _add(archive, "skills/cvgen-index.md", index)
         written.append(dest)
+    (out / "VERSION").write_text(version + "\n", encoding="utf-8")
     return written
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", type=Path, default=ROOT / "tools" / "dist")
-    parser.add_argument("--linux", type=Path, required=True)
-    parser.add_argument("--macos", type=Path, required=True)
-    parser.add_argument("--windows", type=Path, required=True)
-    parser.add_argument("--only", choices=["linux", "macos", "windows"], default="")
+    parser.add_argument("--version", default="")
+    for platform in ARCHIVES:
+        parser.add_argument(f"--{platform}", type=Path)
     args = parser.parse_args()
-    os.environ["CVGEN_PACK_ONLY"] = args.only
-    binaries = {"linux": args.linux, "macos": args.macos, "windows": args.windows}
-    for path in package(args.out, binaries):
+    binaries = {platform: getattr(args, platform) for platform in ARCHIVES if getattr(args, platform)}
+    if not binaries:
+        raise SystemExit("至少给一个平台的可执行文件：--linux / --macos / --windows")
+    for path in package(args.out, binaries, args.version or cli_version()):
         print(path.name, path.stat().st_size)
 
 

@@ -10,7 +10,7 @@ from .. import db, events
 from ..auth import ROLES, Principal, current_principal, need
 from ..providers import adapter_for
 from ..providers import instances as provider_lib
-from ..security import API_KEY_PREFIX, hash_password, new_token, token_hash
+from ..security import API_KEY_PREFIX, encrypt_secret, hash_password, new_token, new_webhook_secret, token_hash
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -135,7 +135,8 @@ def update_user(user_id: str, body: UserIn, principal: Principal = Depends(need(
 def list_keys(principal: Principal = Depends(need("admin"))) -> dict:
     with db.tx() as conn:
         rows = conn.execute(select(db.api_keys).order_by(db.api_keys.c.created_at.desc())).mappings().all()
-    return {"items": [{key: value for key, value in row.items() if key != "key_hash"} for row in rows]}
+    return {"items": [{key: value for key, value in row.items() if key not in {"key_hash", "webhook_secret_enc"}}
+                      for row in rows]}
 
 
 @router.post("/keys")
@@ -144,6 +145,7 @@ def create_key(body: KeyIn, principal: Principal = Depends(need("admin"))) -> di
     if not body.scopes or set(body.scopes) - allowed:
         raise HTTPException(status_code=400, detail=f"权限范围只能从 {', '.join(sorted(allowed))} 里选")
     token = new_token(API_KEY_PREFIX)
+    webhook_secret = new_webhook_secret()
     with db.tx() as conn:
         if not conn.execute(select(db.workspaces.c.id).where(db.workspaces.c.id == body.workspace_id)).first():
             raise HTTPException(status_code=404, detail="没有这个工作区")
@@ -151,11 +153,13 @@ def create_key(body: KeyIn, principal: Principal = Depends(need("admin"))) -> di
         conn.execute(insert(db.api_keys).values(
             id=key_id, name=body.name, owner_user_id=principal.user_id, workspace_id=body.workspace_id,
             scopes=body.scopes, prefix=token[:12], key_hash=token_hash(token), rate_per_minute=body.rate_per_minute,
+            webhook_secret_enc=encrypt_secret(webhook_secret),
             monthly_budget_yuan=body.monthly_budget_yuan,
         ))
         events.record(conn, principal, "apikey.create", workspace_id=body.workspace_id, target_kind="apikey",
                       target_id=key_id, payload={"name": body.name, "scopes": body.scopes})
-    return {"id": key_id, "key": token, "prefix": token[:12], "message": "密钥只显示这一次，请立即保存"}
+    return {"id": key_id, "key": token, "prefix": token[:12], "webhook_secret": webhook_secret,
+            "message": "密钥和回调签名密钥只显示这一次，请立即保存"}
 
 
 @router.post("/keys/{key_id}/revoke")
@@ -167,6 +171,18 @@ def revoke_key(key_id: str, principal: Principal = Depends(need("admin"))) -> di
             raise HTTPException(status_code=404, detail="没有这个密钥或已经吊销")
         events.record(conn, principal, "apikey.revoke", target_kind="apikey", target_id=key_id)
     return {"ok": True}
+
+
+@router.get("/webhook-secret")
+def webhook_secret(rotate: bool = False, principal: Principal = Depends(need("admin"))) -> dict:
+    """Secret that signs callbacks of runs started in the web console (API-key runs use the key's own secret)."""
+    from ..engine.webhooks import global_secret
+
+    with db.tx() as conn:
+        secret = global_secret(conn, rotate=rotate)
+        if rotate:
+            events.record(conn, principal, "webhook.rotate", target_kind="settings", target_id="webhook_secret")
+    return {"webhook_secret": secret}
 
 
 @router.get("/settings")

@@ -1,7 +1,8 @@
 """Service API v1 for other systems. API keys are bound to one workspace and see only published workflows.
 
 Callbacks: when a run has callback_url, cvgen POSTs {event, run_id, status, ...} with headers
-X-CVGEN-Event, X-CVGEN-Timestamp and X-CVGEN-Signature: sha256=HMAC_SHA256(secret, "<timestamp>.<body>").
+X-CVGEN-Event, X-CVGEN-Timestamp and X-CVGEN-Signature: sha256=HMAC_SHA256(webhook_secret, "<timestamp>.<body>"),
+where webhook_secret is the one returned when the API key was created.
 """
 
 from __future__ import annotations
