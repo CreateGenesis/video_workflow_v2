@@ -134,5 +134,18 @@ class Adapter:
         return []
 
 
+def http_options(instance: Instance) -> dict:
+    """Proxy policy per instance (options.proxy): "env" follows HTTP(S)_PROXY / NO_PROXY (default for
+    external APIs), "none" connects directly (default for ComfyUI hosts on the LAN), anything else is
+    used as the proxy URL."""
+    default = "none" if instance.protocol == "comfyui" else "env"
+    proxy = (instance.options or {}).get("proxy", default)
+    if proxy == "none":
+        return {"trust_env": False}
+    if proxy and proxy != "env":
+        return {"trust_env": False, "proxy": proxy}
+    return {"trust_env": True}
+
+
 def cost_of(usage: list[Usage], pricing: dict) -> float:
     return round(sum(float(pricing.get(item.unit, 0)) * float(item.quantity) for item in usage), 4)

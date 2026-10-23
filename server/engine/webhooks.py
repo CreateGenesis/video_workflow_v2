@@ -35,7 +35,7 @@ def deliver_due(limit: int = 10) -> int:
             }
             error = ""
             try:
-                response = httpx.post(row["url"], content=body, headers=headers, timeout=10, trust_env=False)
+                response = httpx.post(row["url"], content=body, headers=headers, timeout=10)
                 ok = 200 <= response.status_code < 300
                 if not ok:
                     error = f"HTTP {response.status_code}"

@@ -40,6 +40,7 @@ from pathlib import Path
 import httpx
 
 from .base import (
+    http_options,
     Adapter, Outcome, OutputFile, Progress, ProviderError, SubmissionUnknown, TaskContext, TransientError, Usage,
 )
 
@@ -165,7 +166,7 @@ class ComfyUIAdapter(Adapter):
         if self.instance.secret:
             headers["Authorization"] = f"Bearer {self.instance.secret}"
         return httpx.Client(base_url=self._base(), timeout=httpx.Timeout(60.0, connect=10.0),
-                            trust_env=False, headers=headers)
+                            **http_options(self.instance), headers=headers)
 
     def _client_id(self) -> str:
         return f"cvgen-{self.instance.name}"

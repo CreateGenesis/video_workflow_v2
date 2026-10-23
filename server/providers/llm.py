@@ -20,7 +20,7 @@ import re
 
 import httpx
 
-from .base import Adapter, Outcome, ProviderError, TaskContext, TransientError, Usage
+from .base import Adapter, Outcome, ProviderError, TaskContext, TransientError, Usage, http_options
 
 UNSUPPORTED_KEYWORDS = {
     "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
@@ -105,12 +105,15 @@ class _OpenAIBase(_LLM):
         return base if re.search(r"/v\d+$", base) else f"{base}/v1"
 
     def _headers(self) -> dict:
-        return {"Authorization": f"Bearer {self.instance.secret}", "User-Agent": "cvgen"}
+        headers = {"User-Agent": "cvgen"}
+        if self.instance.secret:
+            headers["Authorization"] = f"Bearer {self.instance.secret}"
+        return headers
 
     def _post(self, path: str, body: dict) -> dict:
         timeout = httpx.Timeout(float(self.instance.timeout_seconds or 600), connect=15.0)
         try:
-            with httpx.Client(timeout=timeout, trust_env=False) as client:
+            with httpx.Client(timeout=timeout, **http_options(self.instance)) as client:
                 response = client.post(f"{self._base()}{path}", json=body, headers=self._headers())
         except httpx.HTTPError as exc:
             raise TransientError(f"请求失败：{exc}") from exc
@@ -127,7 +130,7 @@ class _OpenAIBase(_LLM):
 
     def probe(self) -> dict:
         try:
-            response = httpx.get(f"{self._base()}/models", headers=self._headers(), timeout=8, trust_env=False)
+            response = httpx.get(f"{self._base()}/models", headers=self._headers(), timeout=8, **http_options(self.instance))
         except httpx.HTTPError as exc:
             return {"reachable": False, "message": f"无法连通：{exc}"}
         ok = response.status_code < 400
@@ -136,7 +139,7 @@ class _OpenAIBase(_LLM):
 
     def list_models(self) -> list[str]:
         try:
-            payload = httpx.get(f"{self._base()}/models", headers=self._headers(), timeout=15, trust_env=False).json()
+            payload = httpx.get(f"{self._base()}/models", headers=self._headers(), timeout=15, **http_options(self.instance)).json()
         except (httpx.HTTPError, ValueError) as exc:
             raise ProviderError(f"模型列表没有返回：{exc}") from exc
         return sorted({str(item["id"]) for item in payload.get("data", []) if isinstance(item, dict) and item.get("id")})
@@ -233,10 +236,15 @@ class AnthropicMessagesAdapter(_LLM):
     def _client(self):
         import anthropic
 
-        kwargs = {"api_key": self.instance.secret or None, "max_retries": 2,
-                  "timeout": float(self.instance.timeout_seconds or 600)}
-        if not self._official():
-            kwargs["base_url"] = self.instance.base_url.rstrip("/")
+        if self._official() and not self.instance.secret:
+            raise ProviderError("没有配置访问密钥")
+        # Explicit values only: the SDK would otherwise read ANTHROPIC_* variables from the server's environment.
+        kwargs = {"api_key": self.instance.secret or "none", "max_retries": 2,
+                  "timeout": float(self.instance.timeout_seconds or 600),
+                  "base_url": "https://api.anthropic.com" if self._official() else self.instance.base_url.rstrip("/")}
+        network = http_options(self.instance)
+        if not network["trust_env"]:
+            kwargs["http_client"] = anthropic.DefaultHttpxClient(**network)
         return anthropic.Anthropic(**kwargs)
 
     def _model(self) -> str:

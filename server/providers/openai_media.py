@@ -9,7 +9,7 @@ import base64
 
 import httpx
 
-from .base import Adapter, Outcome, OutputFile, ProviderError, TaskContext, TransientError, Usage
+from .base import Adapter, Outcome, OutputFile, ProviderError, TaskContext, TransientError, Usage, http_options
 
 
 class _Http(Adapter):
@@ -21,13 +21,17 @@ class _Http(Adapter):
             raise ProviderError("供应商地址没有配置")
         return base if base.endswith("/v1") else f"{base}/v1"
 
+    def _headers(self) -> dict:
+        headers = {"User-Agent": "cvgen"}
+        if self.instance.secret:
+            headers["Authorization"] = f"Bearer {self.instance.secret}"
+        return headers
+
     def _post(self, path: str, body: dict) -> httpx.Response:
         try:
             with httpx.Client(timeout=httpx.Timeout(self.instance.timeout_seconds or 300, connect=15.0),
-                              trust_env=False) as client:
-                response = client.post(f"{self._base()}{path}", json=body, headers={
-                    "Authorization": f"Bearer {self.instance.secret}", "User-Agent": "cvgen",
-                })
+                              **http_options(self.instance)) as client:
+                response = client.post(f"{self._base()}{path}", json=body, headers=self._headers())
         except httpx.HTTPError as exc:
             raise TransientError(f"请求失败：{exc}") from exc
         if response.status_code in {401, 403}:
@@ -40,7 +44,7 @@ class _Http(Adapter):
 
     def _fetch(self, url: str) -> bytes:
         try:
-            response = httpx.get(url, timeout=120, trust_env=False, follow_redirects=True)
+            response = httpx.get(url, timeout=120, **http_options(self.instance), follow_redirects=True)
             response.raise_for_status()
         except httpx.HTTPError as exc:
             raise TransientError(f"下载失败：{exc}") from exc
@@ -48,16 +52,16 @@ class _Http(Adapter):
 
     def probe(self) -> dict:
         try:
-            response = httpx.get(f"{self._base()}/models", timeout=8, trust_env=False,
-                                 headers={"Authorization": f"Bearer {self.instance.secret}"})
+            response = httpx.get(f"{self._base()}/models", timeout=8, **http_options(self.instance),
+                                 headers=self._headers())
             return {"reachable": True, "status": response.status_code, "message": f"连通（HTTP {response.status_code}）"}
         except (httpx.HTTPError, ProviderError) as exc:
             return {"reachable": False, "message": f"无法连通：{exc}"}
 
     def list_models(self) -> list[str]:
         try:
-            response = httpx.get(f"{self._base()}/models", timeout=15, trust_env=False,
-                                 headers={"Authorization": f"Bearer {self.instance.secret}"})
+            response = httpx.get(f"{self._base()}/models", timeout=15, **http_options(self.instance),
+                                 headers=self._headers())
             payload = response.json()
         except (httpx.HTTPError, ValueError) as exc:
             raise ProviderError(f"模型列表没有返回：{exc}") from exc

@@ -13,6 +13,7 @@ from pathlib import Path
 import httpx
 
 from .base import (
+    http_options,
     Adapter, Outcome, OutputFile, Progress, ProviderError, SubmissionUnknown, TaskContext, TransientError, Usage,
 )
 
@@ -34,7 +35,7 @@ class _AutoDL(Adapter):
     workflow_path = ""
 
     def _client(self) -> httpx.Client:
-        return httpx.Client(timeout=httpx.Timeout(120.0, connect=15.0), trust_env=False, headers={
+        return httpx.Client(timeout=httpx.Timeout(120.0, connect=15.0), **http_options(self.instance), headers={
             "Authorization": f"Bearer {self.instance.secret}",
             "Accept": "application/json",
             "User-Agent": "cvgen",
@@ -85,7 +86,7 @@ class _AutoDL(Adapter):
     def _download(self, url: str, dest: Path) -> Path:
         partial = dest.with_suffix(dest.suffix + ".partial")
         try:
-            with httpx.stream("GET", url, timeout=httpx.Timeout(300.0, connect=15.0), trust_env=False,
+            with httpx.stream("GET", url, timeout=httpx.Timeout(300.0, connect=15.0), **http_options(self.instance),
                               follow_redirects=True) as response:
                 response.raise_for_status()
                 with partial.open("wb") as handle:
