@@ -1,8 +1,15 @@
 # cvgen 技能索引
 
-下载包只带这份索引。登录后用 `cvgen skill show <名称>` 读取正文。正文在服务端。
+下载包只带这份索引。登录后用 `cvgen skill list` 看目录，用 `cvgen skill show <名称>` 读取正文（原文输出）。正文在服务端。
 
-先 `cvgen login`，等网页批准。一次只能有一台在线。
+先做三步：
+
+1. `cvgen login --base 服务地址`：终端打印设备码和批准地址，请有权限的人在网页上批准。凭证只存在本机用户目录。
+2. `cvgen workspace list`，然后 `cvgen workspace use <工作区id>`。
+3. `cvgen work new <名称>` 新建作品（会自动设为当前作品），或 `cvgen work use <作品id>` 接着做已有作品。
+
+之后的命令都作用在当前作品上。`cvgen --help` 列出全部命令和退出码，任何命令后加 `--help` 只看说明、不执行。
+提交任务后用 `cvgen job wait <任务id>` 等结果，用 `cvgen media get <文件id> -o <路径>` 下载，用 `cvgen upload <文件>` 上传本机素材。
 
 | 名称 | 什么时候读 |
 | --- | --- |
