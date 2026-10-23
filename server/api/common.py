@@ -62,6 +62,7 @@ def task_public(task: dict, *, full: bool = False) -> dict:
         "created_by": f"{task.get('created_by_kind')}:{task.get('created_by_id')}",
         "cost_yuan": output.get("cost_yuan"),
         "timeout_seconds": task.get("timeout_seconds"),
+        "attention_kind": attention_kind(task),
     }
     summary_keys = ("artifact_id", "clip_id", "entity_id", "sheet_artifact_id", "last_frame_artifact_id", "passed",
                     "problems", "prompt", "warnings", "duration", "candidates", "attached", "decision", "export",
@@ -74,6 +75,45 @@ def task_public(task: dict, *, full: bool = False) -> dict:
         data["provider_ref"] = {k: v for k, v in (task.get("provider_ref") or {}).items() if not k.startswith("_")}
         data["error_detail"] = error
     return data
+
+
+def attention_kind(task: dict) -> str:
+    """Why a task waits for a person, so the console offers the right actions.
+
+    approval: over the approval threshold or a device's daily budget (approve or reject);
+    submission: a paid submission may or may not have reached the provider (resubmit or fail);
+    upstream: the provider has a job id but the result is late or unreadable (requery);
+    llm: the model's output still has problems after repairs (resubmit or fail).
+    """
+    if task.get("status") != "needs_attention":
+        return ""
+    text = task.get("attention") or ""
+    if "审批" in text or "日预算" in text:
+        return "approval"
+    if task.get("kind") == "llm":
+        return "llm"
+    if task.get("provider_ref"):
+        return "upstream"
+    if "受理" in text or "提交" in text:
+        return "submission"
+    return "other"
+
+
+def annotate(conn, items: list[dict]) -> list[dict]:
+    """Add work_title / run_title to public task dicts so links read as names, not ids."""
+    from sqlalchemy import select
+
+    from .. import db
+
+    work_ids = {item["work_id"] for item in items if item.get("work_id")}
+    run_ids = {item["run_id"] for item in items if item.get("run_id")}
+    works = dict(conn.execute(select(db.works.c.id, db.works.c.title).where(db.works.c.id.in_(work_ids))).all()) if work_ids else {}
+    runs = dict(conn.execute(select(db.runs.c.id, db.workflows.c.name).join(db.workflows, db.workflows.c.id == db.runs.c.workflow_id)
+                             .where(db.runs.c.id.in_(run_ids))).all()) if run_ids else {}
+    for item in items:
+        item["work_title"] = works.get(item.get("work_id"), "")
+        item["run_title"] = runs.get(item.get("run_id"), "")
+    return items
 
 
 def artifact_public(conn, artifact_id: str | None) -> dict | None:

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/misc";
 import { EmptyState, ErrorState, Money, PageHeader, RunStatus, SkeletonRows, StatCard, Time, useDocumentTitle } from "@/components/common";
+import { GettingStarted } from "@/components/getting-started";
 import { TaskRow } from "@/components/tasks";
 import { api, qs } from "@/lib/api";
 import { duration, yuan } from "@/lib/format";
@@ -68,6 +69,8 @@ export default function Dashboard() {
           ) : null
         }
       />
+
+      <GettingStarted />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard label="等我处理" value={can("queue:read") ? attentionItems.length : "—"} hint="闸门审批与异常任务" icon={BellRing} tone="amber" to="/queue" />

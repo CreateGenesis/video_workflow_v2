@@ -13,7 +13,7 @@ from ..auth import Principal, need
 from ..engine import tasks as task_q
 from ..engine.eta import task_eta_seconds
 from ..providers.instances import pools_overview
-from .common import task_public
+from .common import annotate, attention_kind, task_public
 
 router = APIRouter(prefix="/api", tags=["tasks"])
 
@@ -42,7 +42,7 @@ def list_tasks(work_id: str = "", run_id: str = "", status: str = "", pool: str 
     with db.tx() as conn:
         rows = task_q.list_tasks(conn, workspace_id=principal.workspace_id, run_id=run_id or None,
                                  work_id=work_id or None, statuses=statuses, pool=pool or None, limit=min(limit, 500))
-    return {"items": [task_public(row) for row in rows]}
+        return {"items": annotate(conn, [task_public(row) for row in rows])}
 
 
 @router.get("/tasks/{task_id}")
@@ -98,9 +98,11 @@ def resolve_task(task_id: str, body: ResolveIn, principal: Principal = Depends(n
               "resubmit": "tasks:resolve", "attach": "tasks:resolve"}.get(body.action)
     if not needed:
         raise HTTPException(status_code=400, detail="动作只能是 approve、requery、fail、resubmit、attach")
-    principal.require(needed)
     with db.tx() as conn:
         current = _task(conn, task_id, principal)
+        if body.action == "fail" and attention_kind(current) == "approval":
+            needed = "workflows:publish"  # rejecting an approval request is the approver's call
+        principal.require(needed)
         if current.get("run_id"):
             conn.execute(select(db.runs.c.id).where(db.runs.c.id == current["run_id"]).with_for_update())
         try:
@@ -145,7 +147,8 @@ def reprioritize(task_id: str, body: PriorityIn, principal: Principal = Depends(
 @router.get("/queue")
 def queue(principal: Principal = Depends(need("queue:read"))) -> dict:
     with db.tx() as conn:
-        pools = pools_overview(conn)
+        eta_cache: dict = {}
+        pools = pools_overview(conn, eta_cache)
         active = task_q.list_tasks(conn, workspace_id=principal.workspace_id,
                                    statuses=["leased", "running", "submitting", "submitted"], limit=200)
         ready_rows = [dict(row) for row in conn.execute(select(db.tasks).where(db.tasks.c.status == "ready").order_by(
@@ -155,17 +158,17 @@ def queue(principal: Principal = Depends(need("queue:read"))) -> dict:
         for task in ready_rows:
             item = task_public(task)
             item["queue_position"] = task_q.queue_position(conn, task)
-            item["eta_seconds"] = task_eta_seconds(conn, task)
+            item["eta_seconds"] = task_eta_seconds(conn, task, eta_cache)
             ready.append(item)
         attention = task_q.list_tasks(conn, workspace_id=principal.workspace_id,
                                       statuses=["needs_attention", "waiting"], limit=200)
         instances = conn.execute(select(db.provider_instances.c.name, db.provider_instances.c.pool,
                                         db.provider_instances.c.protocol, db.provider_instances.c.health,
                                         db.provider_instances.c.enabled)).mappings().all()
-    return {
-        "pools": pools,
-        "active": [task_public(task) for task in active],
-        "ready": ready,
-        "attention": [task_public(task) for task in attention],
-        "instances": [dict(row) for row in instances],
-    }
+        return {
+            "pools": pools,
+            "active": annotate(conn, [task_public(task) for task in active]),
+            "ready": annotate(conn, ready),
+            "attention": annotate(conn, [task_public(task) for task in attention]),
+            "instances": [dict(row) for row in instances],
+        }

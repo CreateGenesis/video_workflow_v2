@@ -185,6 +185,25 @@ def webhook_secret(rotate: bool = False, principal: Principal = Depends(need("ad
     return {"webhook_secret": secret}
 
 
+class SamplesIn(BaseModel):
+    workspace_id: str
+
+
+@router.post("/samples")
+def load_samples(body: SamplesIn, principal: Principal = Depends(need("admin"))) -> dict:
+    """Load the example assets and workflows (as drafts) into a workspace. Safe to repeat."""
+    from ..samples import seed_samples
+
+    with db.tx() as conn:
+        if not conn.execute(select(db.workspaces.c.id).where(db.workspaces.c.id == body.workspace_id)).first():
+            raise HTTPException(status_code=404, detail="没有这个工作区")
+    result = seed_samples(body.workspace_id, publish=False)
+    with db.tx() as conn:
+        events.record(conn, principal, "samples.load", workspace_id=body.workspace_id, target_kind="workspace",
+                      target_id=body.workspace_id, payload={"workflows": list(result["workflows"])})
+    return result
+
+
 @router.get("/settings")
 def get_settings_view(principal: Principal = Depends(current_principal)) -> dict:
     with db.tx() as conn:

@@ -205,6 +205,103 @@ function nodeSummary(node) {
 
 
 
+const GENERATION_KINDS = ["llm", "image", "video", "tts", "music"];
+
+/** Which provider instance every generation step uses, whether it exists, and a way to switch it. */
+function ProviderBindings({ data }) {
+  const { can } = useSession();
+  const navigate = useNavigate();
+  const client = useQueryClient();
+  const { id, version } = useParams();
+  const providers = useQuery({ queryKey: ["providers"], queryFn: () => api.get("/api/admin/providers") });
+  const steps = (data.spec?.nodes || []).filter((node) => GENERATION_KINDS.includes(node.kind));
+  const [picked, setPicked] = useState({});
+  const items = (providers.data?.items || []).filter((item) => item.enabled);
+  const choices = (kind) => {
+    const names = items.filter((item) => item.kind === kind).map((item) => item.name);
+    const groups = items.filter((item) => item.kind === kind && item.group_name).map((item) => item.group_name);
+    return [...new Set([...groups, ...names])];
+  };
+  const changed = Object.entries(picked).filter(([nodeId, value]) => value && value !== steps.find((node) => node.id === nodeId)?.provider);
+  const save = useMutation({
+    mutationFn: () => {
+      const spec = structuredClone(data.spec);
+      for (const node of spec.nodes) if (picked[node.id]) node.provider = picked[node.id];
+      return data.status === "draft"
+        ? api.put(`/api/workflows/${id}/versions/${version}`, { spec }).then(() => ({ version: Number(version) }))
+        : api.post(`/api/workflows/${id}/versions`, { spec, notes: `由 v${version} 更换供应商` });
+    },
+    onSuccess: (result) => {
+      toast.success(data.status === "draft" ? "供应商已更新，已重新校验" : `已另存为草稿 v${result.version}`);
+      setPicked({});
+      client.invalidateQueries({ queryKey: ["workflow", id] });
+      client.invalidateQueries({ queryKey: ["workflow-version", id] });
+      if (data.status !== "draft") navigate(`/workflows/${id}/v/${result.version}`);
+    },
+    meta: { errorTitle: "保存失败" },
+  });
+  if (!steps.length) return null;
+  const editable = can("workflows:draft");
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>供应商绑定</CardTitle>
+        <span className="text-[13px] text-muted-foreground">每个生成步骤用哪个供应商实例（或实例组）</span>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {steps.map((node) => {
+          const options = choices(node.kind);
+          const missing = providers.data && !options.includes(node.provider);
+          return (
+            <div key={node.id} className="flex flex-wrap items-center gap-3 rounded-md border px-3 py-2">
+              <span className="size-2 rounded-full" style={{ background: slotColor(node.kind) }} />
+              <span className="min-w-28 text-[13px] font-medium">{node.title || node.id}</span>
+              <Badge>{kindLabel(node.kind)}</Badge>
+              <span className="flex-1" />
+              {missing ? (
+                <span className="flex items-center gap-1 text-xs text-[#ff9c9c]">
+                  <AlertTriangle className="size-3.5" />
+                  {node.provider} 不存在
+                </span>
+              ) : null}
+              {editable ? (
+                <Select
+                  aria-label={`${node.title || node.id} 的供应商`}
+                  className="h-8 w-56"
+                  value={picked[node.id] || node.provider}
+                  onChange={(event) => setPicked((current) => ({ ...current, [node.id]: event.target.value }))}
+                  options={[...new Set([node.provider, ...options])].map((name) => ({
+                    value: name,
+                    label: options.includes(name) ? name : `${name}（未配置）`,
+                  }))}
+                />
+              ) : (
+                <code className="text-xs">{node.provider}</code>
+              )}
+            </div>
+          );
+        })}
+        {providers.data && steps.some((node) => !choices(node.kind).includes(node.provider)) ? (
+          <p className="text-xs text-muted-foreground">
+            标红的步骤找不到供应商，运行会失败。在下拉里换成已登记的实例，或先到{" "}
+            <Link className="text-primary hover:underline" to="/settings">设置 → 供应商</Link> 登记。
+          </p>
+        ) : null}
+        {editable && changed.length ? (
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <Button size="sm" variant="ghost" onClick={() => setPicked({})}>
+              还原
+            </Button>
+            <Button size="sm" loading={save.isPending} onClick={() => save.mutate()}>
+              {data.status === "draft" ? `保存（${changed.length} 处）` : `另存为新草稿（${changed.length} 处）`}
+            </Button>
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
 function Overview({ data }) {
   const spec = data.spec || {};
   const nodes = Object.fromEntries((spec.nodes || []).map((node) => [node.id, node]));
@@ -245,6 +342,7 @@ function Overview({ data }) {
             </ul>
           </div>
         ) : null}
+        <ProviderBindings data={data} />
         <Card className="overflow-hidden">
           <CardHeader>
             <CardTitle>步骤图</CardTitle>

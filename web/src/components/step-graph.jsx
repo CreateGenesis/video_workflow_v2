@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Background, BackgroundVariant, Controls, Handle, MarkerType, MiniMap, Position, ReactFlow, ReactFlowProvider } from "@xyflow/react";
+import { Background, BackgroundVariant, Controls, Handle, MarkerType, Position, ReactFlow, ReactFlowProvider } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import "@/styles/flow.css";
 import { kindLabel } from "@/lib/labels";
@@ -30,30 +30,40 @@ function StepNode({ data, selected }) {
 
 const nodeTypes = { step: StepNode };
 
+const COLUMN = 300;
+const ROW = 150;
+const LEVELS_PER_ROW = 3;
+
+/** Dependency depth decides the column; long pipelines wrap onto the next band so text stays readable. */
 function layout(order, deps) {
   const depth = {};
   for (const id of order) {
     const parents = deps[id] || [];
     depth[id] = parents.length ? Math.max(...parents.map((parent) => (depth[parent] ?? 0) + 1)) : 0;
   }
-  const columns = {};
+  const levels = {};
   for (const id of order) {
-    const column = depth[id] || 0;
-    columns[column] = columns[column] || [];
-    columns[column].push(id);
+    (levels[depth[id] || 0] ||= []).push(id);
   }
   const positions = {};
-  for (const [column, ids] of Object.entries(columns)) {
-    ids.forEach((id, index) => {
-      positions[id] = { x: Number(column) * 280, y: index * 150 };
+  let bandTop = 0;
+  const levelIds = Object.keys(levels).map(Number).sort((a, b) => a - b);
+  for (let start = 0; start < levelIds.length; start += LEVELS_PER_ROW) {
+    const band = levelIds.slice(start, start + LEVELS_PER_ROW);
+    const tallest = Math.max(...band.map((level) => levels[level].length));
+    band.forEach((level, column) => {
+      levels[level].forEach((id, index) => {
+        positions[id] = { x: column * COLUMN, y: bandTop + index * ROW };
+      });
     });
+    bandTop += tallest * ROW + 40;
   }
-  return positions;
+  return { positions, height: bandTop };
 }
 
 export function StepGraph({ nodes = [], order = [], deps = {}, summaries = {} }) {
   const byId = useMemo(() => Object.fromEntries(nodes.map((node) => [node.id, node])), [nodes]);
-  const positions = useMemo(() => layout(order, deps), [order, deps]);
+  const { positions, height } = useMemo(() => layout(order, deps), [order, deps]);
   const flowNodes = useMemo(
     () =>
       order.map((id) => {
@@ -95,31 +105,28 @@ export function StepGraph({ nodes = [], order = [], deps = {}, summaries = {} })
   }
 
   return (
-    <div className="flow-canvas h-[460px] overflow-hidden rounded-lg border border-[#4e4e4e] bg-[#141414]" data-testid="step-graph">
+    <div className="flow-canvas overflow-hidden border-y border-[#4e4e4e] bg-[#141414]" style={{ height: Math.min(Math.max(height + 60, 220), 620) }} data-testid="step-graph">
       <ReactFlowProvider>
         <ReactFlow
           nodes={flowNodes}
           edges={edges}
           nodeTypes={nodeTypes}
           fitView
-          fitViewOptions={{ padding: 0.2 }}
+          fitViewOptions={{ padding: 0.12, minZoom: 0.75, maxZoom: 1 }}
           nodesDraggable={false}
           nodesConnectable={false}
           elementsSelectable
           colorMode="dark"
           proOptions={{ hideAttribution: true }}
-          minZoom={0.4}
+          minZoom={0.5}
           maxZoom={1.6}
+          panOnScroll={false}
+          zoomOnScroll={false}
+          preventScrolling={false}
         >
           <Background variant={BackgroundVariant.Dots} gap={18} size={1} color="#4e4e4e" />
           <Controls showInteractive={false} />
-          <MiniMap
-            pannable
-            zoomable
-            bgColor="#171718"
-            maskColor="rgba(23,23,24,0.72)"
-            nodeColor={(node) => slotColor(node.data?.kind)}
-          />
+
         </ReactFlow>
       </ReactFlowProvider>
     </div>

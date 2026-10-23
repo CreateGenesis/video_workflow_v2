@@ -157,7 +157,8 @@ def sync_slots(conn: Connection, pool: str) -> None:
     ))
 
 
-def pools_overview(conn: Connection) -> list[dict]:
+def pools_overview(conn: Connection, cache: dict | None = None) -> list[dict]:
+    cache = {} if cache is None else cache
     rows = conn.execute(select(db.pools).order_by(db.pools.c.name)).mappings().all()
     result = []
     for row in rows:
@@ -171,7 +172,7 @@ def pools_overview(conn: Connection) -> list[dict]:
 
         result.append({
             **dict(row), "busy": busy, "ready": waiting,
-            "eta_seconds": pool_eta_seconds(conn, row["name"]),
+            "eta_seconds": pool_eta_seconds(conn, row["name"], cache),
         })
     return result
 

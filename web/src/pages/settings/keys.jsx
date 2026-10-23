@@ -43,7 +43,7 @@ export default function KeysTab() {
         </p>
         <Button size="sm" onClick={() => setCreating(true)}>
           <Plus />
-          创建密钥
+          新建密钥
         </Button>
       </div>
       <QueryView query={keys} skeleton={<SkeletonRows rows={3} />}>
@@ -129,11 +129,26 @@ export default function KeysTab() {
               <DialogDescription>只显示这一次。关闭后无法再查看，请立即复制保存。</DialogDescription>
             </DialogHeader>
             <DialogBody className="space-y-3">
-              <div className="break-all rounded-md border bg-[#222] p-3 font-mono text-[13px]">{created.key}</div>
-              <Notice tone="warn">调用时放在请求头：Authorization: Bearer &lt;密钥&gt;</Notice>
+              <div>
+                <div className="mb-1 flex items-center justify-between">
+                  <span className="text-xs font-medium text-muted-foreground">API 密钥（调用时放在请求头 Authorization: Bearer …）</span>
+                  <CopyButton value={created.key} label="复制" />
+                </div>
+                <div className="break-all rounded-md border bg-[#222] p-3 font-mono text-[13px]">{created.key}</div>
+              </div>
+              {created.webhook_secret ? (
+                <div>
+                  <div className="mb-1 flex items-center justify-between">
+                    <span className="text-xs font-medium text-muted-foreground">回调签名密钥（验证 X-CVGEN-Signature 用）</span>
+                    <CopyButton value={created.webhook_secret} label="复制" />
+                  </div>
+                  <div className="break-all rounded-md border bg-[#222] p-3 font-mono text-[13px]">{created.webhook_secret}</div>
+                </div>
+              ) : null}
+              <Notice tone="warn">两个值都只显示这一次。回调的签名是 HMAC-SHA256(回调签名密钥, "时间戳.请求体")，时间戳在 X-CVGEN-Timestamp 头里。</Notice>
             </DialogBody>
             <DialogFooter>
-              <CopyButton value={created.key} label="复制密钥" size="default" variant="default" />
+              <CopyButton value={`CVGEN_API_KEY=${created.key}\nCVGEN_WEBHOOK_SECRET=${created.webhook_secret || ""}`} label="复制为环境变量" size="default" variant="default" />
               <Button variant="outline" onClick={() => setCreated(null)}>
                 我已保存
               </Button>

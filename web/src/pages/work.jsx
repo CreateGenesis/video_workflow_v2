@@ -26,7 +26,7 @@ import {
   useDocumentTitle,
 } from "@/components/common";
 import { Thumb, VideoPlayer } from "@/components/media";
-import { TaskRow } from "@/components/tasks";
+import { TaskRow, TaskDetailSheet } from "@/components/tasks";
 import { api, qs } from "@/lib/api";
 import { pretty, shortId } from "@/lib/format";
 import { ACTOR_KIND, OPEN_TASK, actionLabel, kindLabel } from "@/lib/labels";
@@ -189,6 +189,7 @@ function PromptVersions({ shotId, count }) {
 }
 
 function ShotCard({ row, index }) {
+  const [openTask, setOpenTask] = useState(null);
   const shot = row.shot;
   const clip = row.clips[0];
   const title = shot.data?.title || `镜头 ${index + 1}`;
@@ -196,6 +197,7 @@ function ShotCard({ row, index }) {
   const checks = row.tasks.filter((task) => task.kind === "check" || task.kind === "inspect");
   return (
     <Card>
+      {openTask ? <TaskDetailSheet taskId={openTask} onClose={() => setOpenTask(null)} /> : null}
       <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2.5">
         <span className="tnum flex size-6 items-center justify-center rounded bg-[#353535] text-xs font-semibold">{index + 1}</span>
         <span className="text-sm font-semibold">{title}</span>
@@ -285,11 +287,17 @@ function ShotCard({ row, index }) {
               <p className="mb-1.5 text-xs font-medium text-muted-foreground">任务</p>
               <div className="flex flex-wrap gap-1.5">
                 {row.tasks.map((task) => (
-                  <span key={task.id} className="inline-flex items-center gap-1.5 rounded-md border border-[#4e4e4e] bg-[#222] px-2 py-1 text-xs">
+                  <button
+                    key={task.id}
+                    type="button"
+                    onClick={() => setOpenTask(task.id)}
+                    title="查看任务详情"
+                    className="inline-flex items-center gap-1.5 rounded-md border border-[#4e4e4e] bg-[#222] px-2 py-1 text-xs hover:border-primary hover:bg-[#2a2a2c]"
+                  >
                     {kindLabel(task.kind)}
                     <TaskStatus status={task.status} />
                     {task.cost_yuan ? <Money value={task.cost_yuan} className="text-muted-foreground" /> : null}
-                  </span>
+                  </button>
                 ))}
               </div>
             </div>
@@ -309,12 +317,23 @@ export function ActivityList({ workId, runId }) {
     initialPageParam: 0,
     getNextPageParam: (last) => (last.items.length === 50 ? last.next_before : undefined),
   });
+  const [everything, setEverything] = useState(false);
   if (feed.isLoading) return <SkeletonRows rows={6} />;
   if (feed.isError) return <ErrorState error={feed.error} retry={feed.refetch} />;
-  const items = feed.data.pages.flatMap((page) => page.items);
-  if (!items.length) return <EmptyState compact icon={ListChecks} title="还没有活动" description="每一次写操作都会记一条，带上操作者。" />;
+  const all = feed.data.pages.flatMap((page) => page.items);
+  if (!all.length) return <EmptyState compact icon={ListChecks} title="还没有活动" description="每一次写操作都会记一条，带上操作者。" />;
+  const items = everything ? all : all.filter((event) => !isRoutine(event));
+  const hidden = all.length - items.length;
   return (
     <Card>
+      <div className="flex items-center justify-between gap-2 border-b px-4 py-2 text-xs text-muted-foreground">
+        <span>{everything ? `全部 ${all.length} 条` : hidden ? `重点 ${items.length} 条，另有 ${hidden} 条执行器的例行记录` : `${items.length} 条`}</span>
+        {hidden || everything ? (
+          <Button variant="ghost" size="xs" onClick={() => setEverything((value) => !value)}>
+            {everything ? "只看重点" : "显示全部"}
+          </Button>
+        ) : null}
+      </div>
       <ol className="divide-y">
         {items.map((event) => (
           <li key={event.id} className="flex gap-3 px-4 py-2.5">
@@ -344,6 +363,13 @@ export function ActivityList({ workId, runId }) {
       ) : null}
     </Card>
   );
+}
+
+const ROUTINE = new Set(["entity.create", "entity.update", "link.create", "task.create", "asset.version"]);
+
+/** Bookkeeping by the executor or system (creating entities, links, tasks): hidden unless asked for. */
+function isRoutine(event) {
+  return ROUTINE.has(event.action) && (event.actor_kind === "worker" || event.actor_kind === "system");
 }
 
 function PayloadLine({ payload }) {

@@ -69,7 +69,7 @@ export default function ProvidersTab() {
         <p className="text-[13px] text-muted-foreground">每个供应商实例对应一个接口地址和密钥。工作流按实例名或实例组引用。密钥加密保存，只显示后四位。</p>
         <Button size="sm" onClick={() => setEditing({})}>
           <Plus />
-          新增供应商
+          新建供应商
         </Button>
       </div>
       <QueryView query={providers} skeleton={<SkeletonRows rows={5} />}>
@@ -216,6 +216,40 @@ function parseJson(text) {
   }
 }
 
+const PRESETS = [
+  {
+    label: "OpenAI 兼容大模型",
+    hint: "DeepSeek、通义、Kimi、各类网关",
+    form: { name: "llm.default", kind: "llm", protocol: "openai-chat", base_url: "https://", retry_safe: true, max_attempts: "3", timeout_seconds: "600",
+            pricing: { token_in: 0.000004, token_out: 0.000016 } },
+  },
+  {
+    label: "Anthropic（Claude）",
+    hint: "官方或兼容网关",
+    form: { name: "llm.claude", kind: "llm", protocol: "anthropic-messages", base_url: "", model: "claude-opus-5-5", retry_safe: true, max_attempts: "3",
+            timeout_seconds: "600", options: { effort: "high" }, pricing: { token_in: 0.00003, token_out: 0.00015 } },
+  },
+  {
+    label: "生图 API",
+    hint: "OpenAI Images 兼容接口",
+    form: { name: "image.default", kind: "image", protocol: "openai-images", base_url: "https://", retry_safe: true, max_attempts: "3",
+            timeout_seconds: "300", pool: "image-api", pricing: { image: 0.2 } },
+  },
+  {
+    label: "ComfyUI GPU 机",
+    hint: "自部署，按槽位逐条提交",
+    form: { name: "video.comfy-gpu1", kind: "video", protocol: "comfyui", group_name: "video.comfy", base_url: "http://", pool: "gpu1",
+            retry_safe: true, max_attempts: "3", timeout_seconds: "7200", options: { proxy: "none" }, pricing: { gpu_second: 0.002 } },
+  },
+  {
+    label: "AutoDL H3",
+    hint: "按次计费，不自动重发",
+    form: { name: "video.autodl-h3", kind: "video", protocol: "autodl-h3", base_url: "https://www.autodl.art", model: "minimax_h3_zm_u24",
+            pool: "autodl-h3", retry_safe: false, max_attempts: "1", timeout_seconds: "3600", pricing: { video_second: 0.5 } },
+  },
+];
+const NAME_RULE = /^(llm|image|video|tts|music)\.[a-z0-9][a-z0-9-]{0,39}$/;
+
 function ProviderDialog({ initial, onClose }) {
   const client = useQueryClient();
   const creating = !initial.name;
@@ -244,8 +278,33 @@ function ProviderDialog({ initial, onClose }) {
     () => ({ pricing: parseJson(form.pricing), options: parseJson(form.options), capabilities: parseJson(form.capabilities) }),
     [form.pricing, form.options, form.capabilities],
   );
+  const applyPreset = (preset) =>
+    setForm((current) => ({
+      ...current,
+      group_name: "",
+      model: "",
+      pool: "",
+      ...preset.form,
+      pricing: jsonText(preset.form.pricing),
+      options: jsonText(preset.form.options),
+      capabilities: jsonText(preset.form.capabilities),
+    }));
+  const changeKind = (kind) =>
+    setForm((current) => {
+      const [prefix, ...rest] = current.name.split(".");
+      const renamed = PROVIDER_KINDS.includes(prefix) && rest.length ? `${kind}.${rest.join(".")}` : current.name;
+      const keep = PROTOCOLS.some((item) => item.value === current.protocol && item.kinds.includes(kind));
+      return { ...current, kind, name: creating ? renamed : current.name, protocol: keep ? current.protocol : (PROTOCOLS.find((item) => item.kinds.includes(kind))?.value || "") };
+    });
+  const trimmedName = form.name.trim();
   const problems = {
-    name: !form.name.trim() ? "请填写实例名" : !/^[\w.\-]+$/.test(form.name.trim()) ? "只能用字母、数字、点、横线和下划线" : "",
+    name: !trimmedName
+      ? "请填写实例名"
+      : !NAME_RULE.test(trimmedName)
+        ? "写成 能力.名称，例如 llm.default、video.comfy-gpu1（小写字母、数字和 -）"
+        : trimmedName.split(".")[0] !== form.kind
+          ? `实例名的前缀要和类型一致：${form.kind}.…`
+          : "",
     protocol: !protocols.some((item) => item.value === form.protocol) ? "这个协议不能用于该类型" : "",
     pricing: parsed.pricing[1],
     options: parsed.options[1],
@@ -277,7 +336,7 @@ function ProviderDialog({ initial, onClose }) {
       return api.post("/api/admin/providers", body);
     },
     onSuccess: () => {
-      toast.success(creating ? `已新增 ${form.name}` : `已保存 ${form.name}`);
+      toast.success(creating ? `已新建 ${form.name}` : `已保存 ${form.name}`);
       client.invalidateQueries();
       onClose();
     },
@@ -289,10 +348,28 @@ function ProviderDialog({ initial, onClose }) {
     <Dialog open onOpenChange={(open) => (!open ? onClose() : null)}>
       <DialogContent wide>
         <DialogHeader>
-          <DialogTitle>{creating ? "新增供应商实例" : `编辑 ${initial.name}`}</DialogTitle>
+          <DialogTitle>{creating ? "新建供应商实例" : `编辑 ${initial.name}`}</DialogTitle>
           <DialogDescription>改动立即生效，新任务会用新配置。</DialogDescription>
         </DialogHeader>
         <DialogBody>
+          {creating ? (
+            <div className="mb-4">
+              <p className="mb-2 text-xs text-muted-foreground">从常用配置开始（会覆盖下面的字段，密钥仍需自己填）</p>
+              <div className="flex flex-wrap gap-2">
+                {PRESETS.map((preset) => (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    onClick={() => applyPreset(preset)}
+                    className="rounded-md border bg-[#222] px-3 py-1.5 text-left hover:border-primary hover:bg-[#2a2a2c]"
+                  >
+                    <span className="block text-[13px] font-medium">{preset.label}</span>
+                    <span className="block text-[11px] text-muted-foreground">{preset.hint}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <form
             id="provider-form"
             className="grid gap-4 sm:grid-cols-2"
@@ -309,11 +386,8 @@ function ProviderDialog({ initial, onClose }) {
               <Select
                 id="p-kind"
                 value={form.kind}
-                onChange={(event) => {
-                  const kind = event.target.value;
-                  const allowed = PROTOCOLS.filter((item) => item.kinds.includes(kind));
-                  setForm((current) => ({ ...current, kind, protocol: allowed.some((item) => item.value === current.protocol) ? current.protocol : allowed[0].value }));
-                }}
+                disabled={!creating}
+                onChange={(event) => changeKind(event.target.value)}
                 options={PROVIDER_KINDS.map((kind) => ({ value: kind, label: kindLabel(kind) }))}
               />
             </Field>

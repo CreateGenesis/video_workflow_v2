@@ -1,10 +1,11 @@
 import { Link } from "react-router";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Ban, CheckCheck, RotateCcw, Search, ShieldCheck, XOctagon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Sheet } from "@/components/ui/dialog";
 import { Progress, Tooltip } from "@/components/ui/misc";
 import { toast } from "@/components/ui/toast";
-import { Money, TaskStatus, Time, useConfirm } from "@/components/common";
+import { CopyButton, ErrorState, JsonView, KeyValues, Money, SkeletonRows, TaskStatus, Time, useConfirm } from "@/components/common";
 import { Thumb } from "@/components/media";
 import { api } from "@/lib/api";
 import { duration, elapsed, itemLabel, shortId } from "@/lib/format";
@@ -45,27 +46,47 @@ export function useTaskActions() {
   const resolve = useMutation({
     mutationFn: ({ task, action }) => api.post(`/api/tasks/${task.id}/resolve`, { action }),
     onSuccess: (_data, { action }) => {
-      const text = { approve: "已批准，任务进入队列", requery: "已重新查询上游状态", fail: "已标记为失败", resubmit: "已重新提交到队列" };
+      const text = { approve: "已批准，任务进入队列", requery: "已重新查询上游状态", fail: "已结束这个任务", resubmit: "已重新提交到队列" };
       toast.success(text[action] || "已处理");
       refresh();
     },
   });
 
+  /** Actions depend on why the task waits (attention_kind from the server). */
   const attentionActions = (task) => {
     if (task.status !== "needs_attention") return [];
-    const list = [];
-    const isApproval = /批准|审批/.test(task.attention || "");
-    if (isApproval && can("workflows:publish")) list.push("approve");
-    if (can("tasks:resolve")) {
-      if (!isApproval) list.push("requery");
-      list.push("resubmit", "fail");
+    const admin = can("tasks:resolve");
+    switch (task.attention_kind) {
+      case "approval":
+        return can("workflows:publish") ? ["approve", "reject"] : [];
+      case "upstream":
+        return admin ? ["requery", "fail", "resubmit"] : [];
+      case "submission":
+        return admin ? ["resubmit", "fail"] : [];
+      case "llm":
+        return admin ? ["regenerate", "fail"] : [];
+      default:
+        return admin ? ["resubmit", "fail"] : [];
     }
-    return list;
   };
 
   const askResolve = (task, action) => {
     const what = `${kindLabel(task.kind)}任务 ${shortId(task.id)}`;
     const options = {
+      reject: {
+        title: "拒绝执行这个任务？",
+        description: `${what} 不会执行，也不会产生费用。agent 会看到它被拒绝。`,
+        confirmText: "拒绝",
+        danger: true,
+        apiAction: "fail",
+      },
+      regenerate: {
+        title: "让大模型重新生成？",
+        description: `${what} 会重新调用大模型（会产生少量费用），修正循环从头开始。`,
+        confirmText: "重新生成",
+        spends: true,
+        apiAction: "resubmit",
+      },
       approve: {
         title: "批准执行这个任务？",
         description: `${what}\n${task.attention || ""}`,
@@ -91,14 +112,15 @@ export function useTaskActions() {
         danger: true,
       },
     }[action];
-    return confirm({ ...options, action: () => resolve.mutateAsync({ task, action }) });
+    const { apiAction, ...dialog } = options;
+    return confirm({ ...dialog, action: () => resolve.mutateAsync({ task, action: apiAction || action }) });
   };
 
   return { canCancel, askCancel, attentionActions, askResolve };
 }
 
-const ACTION_ICONS = { approve: ShieldCheck, requery: Search, resubmit: RotateCcw, fail: XOctagon };
-const ACTION_TEXT = { approve: "批准", requery: "重新查询", resubmit: "强制重提", fail: "标记失败" };
+const ACTION_ICONS = { approve: ShieldCheck, reject: XOctagon, requery: Search, resubmit: RotateCcw, regenerate: RotateCcw, fail: XOctagon };
+const ACTION_TEXT = { approve: "批准", reject: "拒绝", requery: "重新查询", resubmit: "强制重提", regenerate: "重新生成", fail: "标记失败" };
 
 export function TaskActions({ task, size = "xs" }) {
   const { canCancel, askCancel, attentionActions, askResolve } = useTaskActions();
@@ -121,7 +143,7 @@ export function TaskActions({ task, size = "xs" }) {
           <Button
             key={action}
             size={size}
-            variant={action === "approve" ? "default" : action === "fail" ? "destructive-outline" : "outline"}
+            variant={action === "approve" ? "default" : action === "fail" || action === "reject" ? "destructive-outline" : "outline"}
             onClick={() => askResolve(task, action)}
           >
             <Icon />
@@ -215,12 +237,12 @@ export function TaskRow({ task, showContext = false, className, compact = false 
           ) : null}
           {showContext && task.run_id ? (
             <Link className="text-primary hover:underline" to={`/runs/${task.run_id}`}>
-              运行 {shortId(task.run_id)}
+              运行 {task.run_title || shortId(task.run_id)}
             </Link>
           ) : null}
           {showContext && !task.run_id && task.work_id ? (
             <Link className="text-primary hover:underline" to={`/explore/${task.work_id}`}>
-              作品 {shortId(task.work_id)}
+              作品 {task.work_title || shortId(task.work_id)}
             </Link>
           ) : null}
           <Tooltip content={task.id}>
@@ -230,5 +252,75 @@ export function TaskRow({ task, showContext = false, className, compact = false 
       </div>
       <TaskActions task={task} />
     </div>
+  );
+}
+
+/** Side panel with everything about one task: status, why it waits, error, prompt, outputs, actions. */
+export function TaskDetailSheet({ taskId, onClose }) {
+  const detail = useQuery({ queryKey: ["task", taskId], queryFn: () => api.get(`/api/tasks/${taskId}`), enabled: Boolean(taskId) });
+  const task = detail.data;
+  return (
+    <Sheet open={Boolean(taskId)} onOpenChange={(open) => (!open ? onClose() : null)} title={task ? `${kindLabel(task.kind)}任务` : "任务"} className="max-w-xl">
+      {detail.isLoading ? (
+        <div className="p-4">
+          <SkeletonRows rows={5} />
+        </div>
+      ) : detail.isError ? (
+        <div className="p-4">
+          <ErrorState error={detail.error} retry={detail.refetch} />
+        </div>
+      ) : task ? (
+        <div className="space-y-4 pb-6">
+          <TaskRow task={task} showContext className="border-b" />
+          <div className="space-y-4 px-4">
+            <KeyValues
+              items={[
+                ["任务", <span className="font-mono text-xs">{task.id}</span>],
+                ["状态", <TaskStatus status={task.status} />],
+                ["资源池", task.pool],
+                task.provider ? ["供应商", task.provider] : null,
+                task.queue_position ? ["排队位置", `第 ${task.queue_position} 位`] : null,
+                ["尝试", `${task.attempts} / ${task.max_attempts}`],
+                task.provider_ref && Object.keys(task.provider_ref).length ? ["上游任务号", <span className="font-mono text-xs">{task.provider_ref.task_id || task.provider_ref.prompt_id || "—"}</span>] : null,
+              ].filter(Boolean)}
+            />
+            {task.error_detail && Object.keys(task.error_detail).length ? (
+              <div>
+                <p className="mb-1 text-xs font-medium text-muted-foreground">错误</p>
+                <p className="whitespace-pre-wrap break-words rounded-md border border-[#6a2424] bg-[#3a1717] px-3 py-2 text-[13px] text-[#ff9c9c]">{task.error_detail.message}</p>
+              </div>
+            ) : null}
+            {task.output?.prompt ? (
+              <div>
+                <div className="mb-1 flex items-center justify-between">
+                  <p className="text-xs font-medium text-muted-foreground">提交的提示词</p>
+                  <CopyButton value={task.output.prompt} />
+                </div>
+                <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md border bg-[#171718] p-3 text-[12px] leading-relaxed" style={{ fontFamily: "inherit" }}>
+                  {task.output.prompt}
+                </pre>
+              </div>
+            ) : null}
+            {task.output?.problems?.length ? (
+              <div>
+                <p className="mb-1 text-xs font-medium text-muted-foreground">问题</p>
+                <ul className="list-inside list-disc text-[13px] text-[#ffa931]">
+                  {task.output.problems.map((problem, index) => (
+                    <li key={index}>{problem}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            <details className="rounded-md border px-3 py-2">
+              <summary className="cursor-pointer text-xs text-muted-foreground">原始输入和输出</summary>
+              <div className="mt-2 space-y-2">
+                <JsonView value={task.input} maxHeight="16rem" />
+                <JsonView value={task.output} maxHeight="16rem" />
+              </div>
+            </details>
+          </div>
+        </div>
+      ) : null}
+    </Sheet>
   );
 }

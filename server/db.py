@@ -26,7 +26,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSON, JSONB
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.types import DateTime
 
@@ -228,7 +228,7 @@ workflow_versions = Table(
     "workflow_versions", metadata,
     Column("workflow_id", Text, ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False),
     Column("version", Integer, nullable=False),
-    Column("spec", JSONB, nullable=False),
+    Column("spec", JSON, nullable=False),  # json, not jsonb: keeps key order (input form field order)
     Column("status", Text, nullable=False, server_default="draft"),
     Column("source_work_id", Text),
     _json("fixtures"),

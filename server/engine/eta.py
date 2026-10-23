@@ -55,8 +55,18 @@ def _elapsed_seconds(row) -> float | None:
     return seconds
 
 
-def historical_average(conn: Connection, task: dict) -> float | None:
-    """Mean wall time of recent succeeded tasks in the same signature group."""
+def historical_average(conn: Connection, task: dict, cache: dict | None = None) -> float | None:
+    """Mean wall time of recent succeeded tasks in the same signature group (memoized per request in `cache`)."""
+    key = (signature(task), task.get("kind") or "", task.get("pool") or "")
+    if cache is not None and key in cache:
+        return cache[key]
+    value = _historical_average(conn, task)
+    if cache is not None:
+        cache[key] = value
+    return value
+
+
+def _historical_average(conn: Connection, task: dict) -> float | None:
     provider, template, resolution, duration = signature(task)
     rows = conn.execute(text("""
         SELECT started_at, finished_at, input
@@ -106,7 +116,7 @@ def waves_ahead(position: int, concurrency: int) -> int:
     return ((max(int(position), 1) - 1) // slots) + 1
 
 
-def task_eta_seconds(conn: Connection, task: dict) -> int | None:
+def task_eta_seconds(conn: Connection, task: dict, cache: dict | None = None) -> int | None:
     """Queue waves × historical average. None when the task is not queued or has no history.
 
     §6.5 states position × historical duration. A pool with one slot is exactly
@@ -116,14 +126,14 @@ def task_eta_seconds(conn: Connection, task: dict) -> int | None:
     position = task_q.queue_position(conn, task)
     if not position:
         return None
-    average = historical_average(conn, task)
+    average = historical_average(conn, task, cache)
     if average is None:
         return None
     waves = waves_ahead(position, _concurrency(conn, task.get("pool") or ""))
     return max(1, int(round(waves * average)))
 
 
-def pool_eta_seconds(conn: Connection, pool: str) -> int | None:
+def pool_eta_seconds(conn: Connection, pool: str, cache: dict | None = None) -> int | None:
     """Wait until the current ready queue of this pool is expected to clear.
 
     Each ready task waits (position × group average). The pool estimate is the
@@ -138,7 +148,7 @@ def pool_eta_seconds(conn: Connection, pool: str) -> int | None:
         return 0
     waits = []
     for row in rows:
-        eta = task_eta_seconds(conn, dict(row))
+        eta = task_eta_seconds(conn, dict(row), cache)
         if eta is not None:
             waits.append(eta)
     if not waits:
@@ -146,13 +156,13 @@ def pool_eta_seconds(conn: Connection, pool: str) -> int | None:
     return max(waits)
 
 
-def run_eta_seconds(conn: Connection, tasks: list[dict]) -> int | None:
+def run_eta_seconds(conn: Connection, tasks: list[dict], cache: dict | None = None) -> int | None:
     """Longest estimated wait among this run's ready tasks. None if none have history."""
     waits = []
     for task in tasks:
         if task.get("status") != "ready":
             continue
-        eta = task_eta_seconds(conn, task)
+        eta = task_eta_seconds(conn, task, cache if cache is not None else {})
         if eta is not None:
             waits.append(eta)
     if not waits:
