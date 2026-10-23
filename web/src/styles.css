@@ -72,7 +72,11 @@
 
 @layer base {
   *, ::before, ::after { border-color: var(--color-border); }
-  html { -webkit-text-size-adjust: 100%; }
+  html {
+    -webkit-text-size-adjust: 100%;
+    background: #202020;
+    color-scheme: dark;
+  }
   body {
     margin: 0;
     background: var(--background);
@@ -89,10 +93,16 @@
 
 .tnum { font-variant-numeric: tabular-nums; }
 
+/* Static placeholder. A sweeping gradient strobes while a page waits on its first request. */
 .skeleton {
-  background: linear-gradient(90deg, #353535 0%, #4e4e4e 50%, #353535 100%);
-  background-size: 200% 100%;
-  animation: skeleton 1.3s ease-in-out infinite;
+  background: #353535;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .skeleton {
+    background: linear-gradient(90deg, #353535 0%, #454545 50%, #353535 100%);
+    background-size: 200% 100%;
+    animation: skeleton 2.8s ease-in-out infinite;
+  }
 }
 @keyframes skeleton { to { background-position: -200% 0; } }
 
