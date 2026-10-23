@@ -202,7 +202,13 @@ def seed(conn: Connection, principal) -> list[str]:
                 "pricing": {"token_in": 0.000004, "token_out": 0.00002, "image": 0.2, "video_second": 0.5},
             })
             created.append(f"{kind}.default")
-        return created
+        ensure_pool(conn, "mock-paid", 1)
+        save(conn, principal, "video.comfy-gpu1", {"kind": "video", "protocol": "mock", "pool": "mock-gpu",
+                                                   "group_name": "video.comfy", "pricing": {"gpu_second": 0.001}})
+        save(conn, principal, "video.autodl-h3", {"kind": "video", "protocol": "mock", "pool": "mock-paid",
+                                                  "retry_safe": False, "max_attempts": 1,
+                                                  "pricing": {"video_second": 0.5}})
+        return created + ["video.comfy-gpu1", "video.autodl-h3"]
     token = env.get("AUTODL_API_TOKEN", "")
     if token:
         ensure_pool(conn, "autodl-h3", 2)
