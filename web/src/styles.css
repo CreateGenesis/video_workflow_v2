@@ -13,46 +13,130 @@
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "Cascadia Mono", Menlo, Consolas, "Noto Sans Mono CJK SC", monospace;
 }
 
+/*
+ * ComfyUI official default dark palette (Comfy-Org/ComfyUI_frontend palettes/dark.json).
+ * Page/canvas #202020, menu #171718, charcoal panels #353535 / #262729,
+ * hairline border #4e4e4e, primary Comfy blue #0b8ce9.
+ */
 :root {
-  --background: #f7f6f3;
-  --foreground: #1c1917;
-  --card: #ffffff;
-  --card-foreground: #1c1917;
-  --primary: #1c3d36;
-  --primary-foreground: #f7f6f3;
-  --secondary: #ece8e1;
-  --secondary-foreground: #1c1917;
-  --muted: #efece6;
-  --muted-foreground: #6b6560;
-  --accent: #e7efe9;
-  --accent-foreground: #1c3d36;
-  --border: #e4dfd6;
-  --input: #e4dfd6;
-  --ring: #1c3d36;
-  --radius: 0.7rem;
+  color-scheme: dark;
+  --background: #202020;
+  --foreground: #ffffff;
+  --card: #262729;
+  --card-foreground: #ffffff;
+  --primary: #0b8ce9;
+  --primary-foreground: #ffffff;
+  --secondary: #353535;
+  --secondary-foreground: #ffffff;
+  --muted: #353535;
+  --muted-foreground: #8a8a8a;
+  --accent: #313235;
+  --accent-foreground: #ffffff;
+  --destructive: #ff4444;
+  --border: #4e4e4e;
+  --input: #4e4e4e;
+  --ring: #0b8ce9;
+  --radius: 0.5rem;
+  --comfy-canvas: #202020;
+  --comfy-page: #171718;
+  --comfy-panel: #353535;
+  --comfy-panel-alt: #262729;
+  --comfy-menu: #171718;
+  --comfy-menu-secondary: #303030;
+  --comfy-input: #222222;
+  --comfy-node: #353535;
+  --comfy-node-title: #999999;
+  --comfy-clear: #141414;
+  --slot-image: #64b5f6;
+  --slot-model: #b39ddb;
+  --slot-latent: #ff9cf9;
+  --slot-vae: #ff6e6e;
+  --slot-conditioning: #ffa931;
+  --slot-mask: #81c784;
+  --ok: #81c784;
+  --warn: #ffa931;
+  --danger: #ff4444;
 }
 
-* { box-sizing: border-box; }
-body {
-  margin: 0;
-  background: var(--background);
-  color: var(--foreground);
-  font-family: "IBM Plex Sans", "PingFang SC", "Noto Sans SC", sans-serif;
+@layer base {
+  *, ::before, ::after { border-color: var(--color-border); }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  button, input, select, textarea { font: inherit; }
+  code, pre, kbd { font-family: var(--font-mono); }
+  ::selection { background: color-mix(in srgb, var(--primary) 40%, transparent); }
 }
 
-.edge-flow path {
-  stroke-dasharray: 6 4;
-  animation: edge-flow 1s linear infinite;
-}
+.tnum { font-variant-numeric: tabular-nums; }
 
-@keyframes edge-flow {
-  to { stroke-dashoffset: -20; }
+.skeleton {
+  background: linear-gradient(90deg, #353535 0%, #4e4e4e 50%, #353535 100%);
+  background-size: 200% 100%;
+  animation: skeleton 1.3s ease-in-out infinite;
+}
+@keyframes skeleton { to { background-position: -200% 0; } }
+
+/* React Flow chrome lives in styles/flow.css, imported after the library stylesheet. */
+
+/* Diff */
+.diff-add { background: #14301f; color: #81c784; }
+.diff-del { background: #3a1717; color: #ff6e6e; }
+.diff-hunk { background: #1a2a3a; color: #64b5f6; }
+
+/* Comfy node chrome used by the step graph and the relation graph */
+.comfy-node {
+  width: 220px;
+  overflow: hidden;
+  border-radius: 8px;
+  border: 1px solid #4e4e4e;
+  background: var(--comfy-node);
+  color: #ddd;
+  box-shadow: 0 0 0.5rem rgb(16 16 16 / 0.5);
+}
+.comfy-node.selected { outline: 1px solid #fff; outline-offset: 1px; }
+.comfy-node-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  background: #202121;
+  border-bottom: 2px solid var(--slot, #b39ddb);
+}
+.comfy-node-body { padding: 8px; }
+.comfy-slot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #aaa;
+}
+.comfy-slot-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--slot, #b39ddb);
+  box-shadow: 0 0 0 1px #171718;
 }

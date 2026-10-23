@@ -11,6 +11,7 @@ from sqlalchemy import select, update
 from .. import db, events
 from ..auth import Principal, need
 from ..engine import tasks as task_q
+from ..engine.eta import task_eta_seconds
 from ..providers.instances import pools_overview
 from .common import task_public
 
@@ -50,6 +51,7 @@ def get_task(task_id: str, principal: Principal = Depends(need("queue:read"))) -
         task = _task(conn, task_id, principal)
         data = task_public(task, full=True)
         data["queue_position"] = task_q.queue_position(conn, task)
+        data["eta_seconds"] = task_eta_seconds(conn, task)
         data["depends_on"] = task_q.deps_of(conn, task_id)
         return data
 
@@ -57,7 +59,7 @@ def get_task(task_id: str, principal: Principal = Depends(need("queue:read"))) -
 def _snapshot(task_id: str, principal: Principal) -> tuple[dict, int | None]:
     with db.tx() as conn:
         task = _task(conn, task_id, principal)
-        return task, task_q.queue_position(conn, task)
+        return task, task_q.queue_position(conn, task), task_eta_seconds(conn, task)
 
 
 @router.get("/tasks/{task_id}/wait")
@@ -65,11 +67,11 @@ async def wait_task(task_id: str, timeout: int = 55, principal: Principal = Depe
     """Long poll: returns as soon as the task ends or needs a person, or after `timeout` seconds."""
     deadline = asyncio.get_running_loop().time() + max(1, min(timeout, 120))
     while True:
-        task, position = await asyncio.to_thread(_snapshot, task_id, principal)
+        task, position, eta_seconds = await asyncio.to_thread(_snapshot, task_id, principal)
         if task["status"] in task_q.TERMINAL or task["status"] in {"needs_attention", "waiting"}:
             return {**task_public(task), "done": task["status"] in task_q.TERMINAL}
         if asyncio.get_running_loop().time() >= deadline:
-            return {**task_public(task), "done": False, "queue_position": position}
+            return {**task_public(task), "done": False, "queue_position": position, "eta_seconds": eta_seconds}
         await asyncio.sleep(1.0)
 
 
@@ -146,9 +148,15 @@ def queue(principal: Principal = Depends(need("queue:read"))) -> dict:
         pools = pools_overview(conn)
         active = task_q.list_tasks(conn, workspace_id=principal.workspace_id,
                                    statuses=["leased", "running", "submitting", "submitted"], limit=200)
-        ready = conn.execute(select(db.tasks).where(db.tasks.c.status == "ready").order_by(
+        ready_rows = [dict(row) for row in conn.execute(select(db.tasks).where(db.tasks.c.status == "ready").order_by(
             db.tasks.c.pool, db.tasks.c.priority.desc(), db.tasks.c.sort_key, db.tasks.c.created_at,
-        ).limit(300)).mappings().all()
+        ).limit(300)).mappings().all()]
+        ready = []
+        for task in ready_rows:
+            item = task_public(task)
+            item["queue_position"] = task_q.queue_position(conn, task)
+            item["eta_seconds"] = task_eta_seconds(conn, task)
+            ready.append(item)
         attention = task_q.list_tasks(conn, workspace_id=principal.workspace_id,
                                       statuses=["needs_attention", "waiting"], limit=200)
         instances = conn.execute(select(db.provider_instances.c.name, db.provider_instances.c.pool,
@@ -157,7 +165,7 @@ def queue(principal: Principal = Depends(need("queue:read"))) -> dict:
     return {
         "pools": pools,
         "active": [task_public(task) for task in active],
-        "ready": [task_public(dict(task)) for task in ready],
+        "ready": ready,
         "attention": [task_public(task) for task in attention],
         "instances": [dict(row) for row in instances],
     }

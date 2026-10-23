@@ -288,6 +288,25 @@ def _estimate(conn, instance, kind: str, payload: dict) -> Decimal:
     return sum((Decimal(str(instance.pricing.get(item.unit, 0))) * Decimal(str(item.quantity)) for item in usage), Decimal("0"))
 
 
+def _stamp_video_request(conn, payload: dict) -> None:
+    """Record the §6.5 signature before the task is ready.
+
+    Exploration queues `{shot_id, resolution?, template?}`. Duration lives on the
+    shot. prepare_video later overwrites `input.request` with the same three
+    fields it submits, so a finished generate can estimate the next identical one.
+    A missing duration stays unset; the timeout is not a substitute.
+    """
+    shot = graph.get_entity(conn, payload["shot_id"]) or {}
+    data = shot.get("data") or {}
+    raw = data.get("duration")
+    duration = raw if raw not in (None, "") else None
+    payload["request"] = {
+        "template": payload.get("template") or "",
+        "resolution": payload.get("resolution") or "768p横",
+        "duration": duration,
+    }
+
+
 def _check_input(conn, work_id: str, kind: str, payload: dict) -> None:
     required = {"video": ["shot_id"], "tts": ["line_id", "voice"], "pull": ["url"], "inspect": ["entity_id"],
                 "frame": ["clip_id"], "check": ["clip_id"], "edit": ["clips"], "ffmpeg": ["args"]}.get(kind, [])
@@ -312,6 +331,14 @@ def _normalize(kind: str, payload: dict) -> dict:
         if payload.get("export"):
             ops.append({"op": "export", "resolution": payload.pop("export")})
         payload["ops"] = ops
+    for op in payload.get("ops") or []:
+        if op.get("op") == "subtitle":
+            lines = op.get("lines")
+            if isinstance(lines, str):
+                lines = [lines]
+            if not isinstance(lines, list):
+                raise HTTPException(status_code=400, detail="字幕要写成字符串数组，例如 [\"第一句\",\"第二句\"]")
+            op["lines"] = [str(item.get("text", "")) if isinstance(item, dict) else str(item) for item in lines]
     if kind == "edit":
         for op in payload["ops"]:
             if op.get("op") == "export" and op.get("resolution") and op["resolution"] not in RESOLUTIONS:
@@ -353,7 +380,8 @@ def create_task(work_id: str, body: TaskIn, principal: Principal = Depends(need(
                 if any(status in task_q.OPEN for status in existing):
                     raise HTTPException(status_code=409, detail="这个镜头已有未完成的生成任务，不重复提交")
                 if "succeeded" in existing and not body.again:
-                    raise HTTPException(status_code=409, detail="这个镜头已经成片。确实要再生成一版，请加 again")
+                    raise HTTPException(status_code=409, detail="这个镜头已经成片。确实要再生成一版，请加 --again")
+                _stamp_video_request(conn, payload)
             estimate = _estimate(conn, instance, kind, payload)
             threshold = Decimal(str(db.get_setting(conn, "approval_threshold_yuan", 20)))
             if principal.kind == "device" and threshold and estimate > threshold:

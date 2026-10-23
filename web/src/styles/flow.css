@@ -1,0 +1,52 @@
+/* Loaded after @xyflow/react/dist/style.css so Comfy dark chrome wins. */
+.flow-canvas {
+  --xy-background-color: #141414;
+  --xy-background-pattern-color: #4e4e4e;
+  --xy-minimap-background-color-default: #171718;
+  --xy-minimap-background-color: #171718;
+  --xy-minimap-mask-background-color-default: rgba(23, 23, 24, 0.72);
+  --xy-minimap-mask-background-color: rgba(23, 23, 24, 0.72);
+  --xy-minimap-node-background-color-default: #353535;
+  --xy-minimap-node-background-color: #353535;
+  --xy-controls-button-background-color-default: #262729;
+  --xy-controls-button-background-color-hover-default: #353535;
+  --xy-controls-button-color-default: #dddddd;
+  --xy-controls-button-color-hover-default: #ffffff;
+  --xy-controls-button-border-color-default: #4e4e4e;
+  --xy-controls-box-shadow-default: none;
+  --xy-node-background-color-default: #353535;
+  --xy-node-color-default: #ffffff;
+  --xy-node-border-default: 1px solid #4e4e4e;
+}
+.react-flow__attribution { display: none; }
+.react-flow__background { background: #141414; }
+.react-flow__handle {
+  width: 10px;
+  height: 10px;
+  border: 1px solid #171718;
+  min-width: 0;
+  min-height: 0;
+}
+.react-flow__edge-textbg { fill: #171718; }
+.react-flow__edge-text { font-size: 11px; fill: #ddd; }
+.react-flow__controls-button {
+  background: #262729;
+  border-bottom-color: #4e4e4e;
+  fill: #ddd;
+}
+.react-flow__controls-button:hover { background: #353535; }
+.react-flow__controls { border: 1px solid #4e4e4e; border-radius: 6px; overflow: hidden; box-shadow: none; }
+.react-flow__minimap {
+  background: #171718 !important;
+  background-color: #171718 !important;
+  border: 1px solid #4e4e4e !important;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.react-flow__minimap svg,
+.react-flow__minimap-svg {
+  background: #171718 !important;
+  background-color: #171718 !important;
+}
+.react-flow__minimap-mask { fill: rgba(23, 23, 24, 0.72) !important; }
+.react-flow__minimap-node { fill: #353535 !important; stroke: #4e4e4e !important; }

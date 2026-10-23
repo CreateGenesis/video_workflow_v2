@@ -238,7 +238,10 @@ def _instance(name: str):
 @router.post("/providers/{name}/probe")
 def probe_provider(name: str, principal: Principal = Depends(need("admin"))) -> dict:
     instance = _instance(name)
-    result = adapter_for(instance).probe()
+    try:
+        result = adapter_for(instance).probe()
+    except Exception as exc:
+        result = {"reachable": False, "message": f"探测没有完成：{exc}"}
     with db.tx() as conn:
         conn.execute(update(db.provider_instances).where(db.provider_instances.c.name == name)
                      .values(health={**result, "checked_at": db.now().isoformat()}))

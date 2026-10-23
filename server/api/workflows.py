@@ -328,10 +328,14 @@ def _run_view(conn, run: dict, detail: bool = False) -> dict:
     data["workflow_name"] = workflow
     data["outputs"] = with_urls(run.get("outputs") or {})
     tasks = runner.current_tasks(conn, run["id"])
+    from ..engine.eta import run_eta_seconds
+
     data["progress"] = {
         "total": len(tasks), "succeeded": sum(task["status"] == "succeeded" for task in tasks),
         "active": sum(task["status"] in ("leased", "running", "submitting", "submitted") for task in tasks),
         "waiting": sum(task["status"] in ("waiting", "needs_attention") for task in tasks),
+        "ready": sum(task["status"] == "ready" for task in tasks),
+        "eta_seconds": run_eta_seconds(conn, tasks),
     }
     if detail:
         spec = runner.get_version(conn, run["workflow_id"], run["version"], published_only=False)["spec"]

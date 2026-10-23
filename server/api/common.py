@@ -61,11 +61,12 @@ def task_public(task: dict, *, full: bool = False) -> dict:
         "submitted_at": task.get("submitted_at"), "finished_at": task.get("finished_at"),
         "created_by": f"{task.get('created_by_kind')}:{task.get('created_by_id')}",
         "cost_yuan": output.get("cost_yuan"),
+        "timeout_seconds": task.get("timeout_seconds"),
     }
     summary_keys = ("artifact_id", "clip_id", "entity_id", "sheet_artifact_id", "last_frame_artifact_id", "passed",
                     "problems", "prompt", "warnings", "duration", "candidates", "attached", "decision", "export",
                     "observation_id", "draft", "entities", "flagged", "rerun", "note", "by", "references", "shot_id",
-                    "shot_title", "resolution", "selections", "last_decision", "redo", "url_expires")
+                    "shot_title", "resolution", "selections", "last_decision", "redo", "artifacts", "result")
     shown = output if full else {key: output[key] for key in summary_keys if key in output}
     data["output"] = with_urls(shown)
     if full:

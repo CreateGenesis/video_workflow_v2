@@ -20,6 +20,30 @@ def test_setup_only_once_and_login(client):
     assert other.get("/api/auth/me").json()["role"] == "admin"
 
 
+def test_provider_probe_reports_proxy_failure_instead_of_500(admin, monkeypatch):
+    """A SOCKS proxy without socksio used to raise ImportError and become Internal Server Error."""
+    admin.post("/api/admin/providers", {
+        "name": "video.probe-socks",
+        "kind": "video",
+        "protocol": "autodl-h3",
+        "base_url": "https://www.autodl.art",
+        "secret": "probe-token",
+        "pool": "autodl-h3",
+        "options": {"proxy": "socks5://127.0.0.1:1"},
+    })
+
+    def explode(*_args, **_kwargs):
+        raise ImportError("Using SOCKS proxy, but the 'socksio' package is not installed.")
+
+    monkeypatch.setattr("httpx.Client", explode)
+    result = admin.post("/api/admin/providers/video.probe-socks/probe")
+    assert result["reachable"] is False
+    assert "socksio" in result["message"]
+    listed = admin.get("/api/admin/providers")["items"]
+    saved = next(item for item in listed if item["name"] == "video.probe-socks")
+    assert saved["health"]["reachable"] is False
+
+
 def test_cookie_writes_need_csrf_header(admin):
     bare = Api(admin.client)
     bare.request("POST", "/api/workspaces", json={"name": "无头"}, expect=403)

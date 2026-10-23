@@ -62,6 +62,46 @@ def test_agent_builds_and_generates(admin, agent, fresh, mock_providers):
     assert any(item["actor_kind"] == "device" for item in activity)
 
 
+def test_finished_explore_video_estimates_the_next_queued_one(admin, agent, fresh, mock_providers):
+    """A completed 5s explore generate must estimate the next identical queued generate.
+
+    The create path used to store only shot_id. prepare_video then wrote duration
+    onto the finished row, so GET /api/queue left the next copy at eta_seconds null.
+    """
+    seed_samples(fresh["workspace_id"])
+    work = agent.post("/api/works", {"workspace_id": fresh["workspace_id"], "title": "历史签名"})
+    shot = _shot(agent, work["id"], duration=5)
+    agent.post(f"/api/works/{work['id']}/links", {"name": "references", "source": shot, "target": "asset:ref-zero-space@1"})
+    first = agent.post(f"/api/works/{work['id']}/tasks", {
+        "kind": "video", "provider": "video.default", "input": {"shot_id": shot},
+    })
+    assert first["status"] == "ready"
+    assert first["timeout_seconds"] == 1800
+    queued = admin.get(f"/api/tasks/{first['id']}")
+    request = queued["input"]["request"]
+    assert request["duration"] == 5
+    assert request["resolution"] == "768p横"
+    assert request["template"] == ""
+    assert queued["eta_seconds"] is None
+    assert run_worker() >= 1
+    done = admin.get(f"/api/tasks/{first['id']}")
+    assert done["status"] == "succeeded", done
+    assert done["input"]["request"]["duration"] == 5
+    second = agent.post(f"/api/works/{work['id']}/tasks", {
+        "kind": "video", "provider": "video.default", "again": True, "input": {"shot_id": shot},
+    })
+    assert second["status"] == "ready"
+    overview = admin.get("/api/queue")
+    ready = {item["id"]: item for item in overview["ready"]}
+    assert ready[second["id"]]["queue_position"] == 1
+    assert ready[second["id"]]["eta_seconds"] is not None
+    assert ready[second["id"]]["eta_seconds"] != 1800
+    assert ready[second["id"]]["eta_seconds"] < 60
+    detail = admin.get(f"/api/tasks/{second['id']}")
+    assert detail["eta_seconds"] == ready[second["id"]]["eta_seconds"]
+    assert detail["input"]["request"]["duration"] == 5
+
+
 def test_compose_warning_blocks_until_forced(agent, fresh, mock_providers):
     seed_samples(fresh["workspace_id"])
     work = agent.post("/api/works", {"workspace_id": fresh["workspace_id"], "title": "警告"})

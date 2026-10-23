@@ -167,7 +167,12 @@ def pools_overview(conn: Connection) -> list[dict]:
         waiting = conn.execute(select(func.count()).select_from(db.tasks).where(
             db.tasks.c.pool == row["name"], db.tasks.c.status == "ready",
         )).scalar_one()
-        result.append({**dict(row), "busy": busy, "ready": waiting})
+        from ..engine.eta import pool_eta_seconds
+
+        result.append({
+            **dict(row), "busy": busy, "ready": waiting,
+            "eta_seconds": pool_eta_seconds(conn, row["name"]),
+        })
     return result
 
 

@@ -6,7 +6,7 @@ import time
 from datetime import timedelta
 
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import insert, select, update
 
 from server import db
 from server.auth import SYSTEM
@@ -27,16 +27,172 @@ def work(fresh, mock_providers):
     return {"workspace_id": fresh["workspace_id"], "work_id": work["id"]}
 
 
-def _music(work: dict, pool: str = "local", priority: int = 0, sort_key: str = "", **kwargs) -> dict:
+def _music(work: dict, pool: str = "local", priority: int = 0, sort_key: str = "", kind: str = "music", **kwargs) -> dict:
     with db.tx() as conn:
-        return task_q.create(conn, SYSTEM, workspace_id=work["workspace_id"], kind="music", pool=pool,
-                             input={"prompt": "测试"}, work_id=work["work_id"], provider_instance="music.default",
+        payload = kwargs.pop("input", {"prompt": "测试"})
+        provider = kwargs.pop("provider_instance", "music.default")
+        return task_q.create(conn, SYSTEM, workspace_id=work["workspace_id"], kind=kind, pool=pool,
+                             input=payload, work_id=work["work_id"], provider_instance=provider,
                              priority=priority, sort_key=sort_key, **kwargs)
 
 
 def _claim(pools=None):
     with db.tx() as conn:
         return task_q.claim(conn, "w1", pools)
+
+
+def _finish(task: dict, *, seconds: int, provider: str, template: str, resolution: str, duration: int,
+           via: str = "flat") -> None:
+    """Record a succeeded task whose wall time and signature the ETA query can read.
+
+    `via` is `flat` for exploration input, `request` for the fields prepare_video writes
+    after composing a shot, or `node` for a workflow node spec.
+    """
+    if via == "request":
+        payload = {"request": {"template": template, "resolution": resolution, "duration": duration}}
+    elif via == "node":
+        payload = {"node": {"template": template, "resolution": resolution, "duration_seconds": duration}}
+    else:
+        payload = {"template": template, "resolution": resolution, "duration": duration, "prompt": "历史"}
+    with db.tx() as conn:
+        conn.execute(update(db.tasks).where(db.tasks.c.id == task["id"]).values(
+            status="succeeded",
+            provider_instance=provider,
+            input=payload,
+            started_at=db.now() - timedelta(seconds=seconds),
+            finished_at=db.now(),
+        ))
+
+
+def test_queue_overview_reports_pool_eta(admin, work):
+    """§6.5: estimated completion is queue position × historical duration of the same group.
+
+    A ready 5-second video with no matching history must not be labeled with its 1800s timeout.
+    Two prior runs of the same provider, template, resolution and duration (10s and 20s) make
+    the average 15s, so the first queued task is 15s and the second is 30s.
+    """
+    with db.tx() as conn:
+        instances.set_pool(conn, SYSTEM, "local", concurrency=1)
+    same = {"provider": "video.default", "template": "asset:comfy-wan@1", "resolution": "768p横", "duration": 5}
+    other = {"provider": "video.other", "template": "asset:comfy-wan@1", "resolution": "768p横", "duration": 5}
+    for seconds in (10, 20):
+        done = _music(work, pool="local", provider_instance=same["provider"])
+        _finish(done, seconds=seconds, **same)
+    # A different provider must not leak into the group average.
+    foreign = _music(work, pool="local", provider_instance=other["provider"])
+    _finish(foreign, seconds=600, **other)
+    first = _music(work, pool="local", sort_key="a", timeout_seconds=1800, provider_instance=same["provider"],
+                   input={"template": same["template"], "resolution": same["resolution"], "duration": 5, "prompt": "排队"})
+    second = _music(work, pool="local", sort_key="b", timeout_seconds=1800, provider_instance=same["provider"],
+                    input={"template": same["template"], "resolution": same["resolution"], "duration": 5, "prompt": "排队"})
+    unknown = _music(work, pool="local", sort_key="c", timeout_seconds=1800, provider_instance="video.fresh",
+                     input={"template": same["template"], "resolution": same["resolution"], "duration": 5, "prompt": "无历史"})
+    overview = admin.get("/api/queue")
+    pools = {pool["name"]: pool for pool in overview["pools"]}
+    local = pools["local"]
+    assert local["busy"] == 0
+    assert local["ready"] == 3
+    # Position 2 × 15s average. The 1800s timeout is not the estimate.
+    assert local["eta_seconds"] == 30
+    ready = {task["id"]: task for task in overview["ready"]}
+    assert ready[first["id"]]["queue_position"] == 1
+    assert ready[first["id"]]["eta_seconds"] == 15
+    assert ready[second["id"]]["queue_position"] == 2
+    assert ready[second["id"]]["eta_seconds"] == 30
+    assert ready[unknown["id"]]["eta_seconds"] is None
+    assert ready[unknown["id"]]["timeout_seconds"] == 1800
+    # Shipped queue rows use position × same-group average. 1800 // concurrency is not an estimate.
+    assert ready[first["id"]]["eta_seconds"] == 1 * 15
+    assert ready[second["id"]]["eta_seconds"] == 2 * 15
+    assert ready[first["id"]]["eta_seconds"] != 1800
+    assert ready[second["id"]]["eta_seconds"] != 1800
+    detail = admin.get(f"/api/tasks/{first['id']}")
+    assert detail["eta_seconds"] == 15
+    assert detail["queue_position"] == 1
+    claimed = _claim(["local"])
+    assert claimed["id"] == first["id"]
+    after = admin.get("/api/queue")
+    after_local = next(pool for pool in after["pools"] if pool["name"] == "local")
+    assert after_local["busy"] == 1
+    assert after_local["ready"] == 2
+    # The remaining matched task is now position 1, so the pool wait drops to 15s.
+    assert after_local["eta_seconds"] == 15
+    assert any(task["id"] == claimed["id"] for task in after["active"])
+    # Two slots run the first two positions in one wave. A 5s video is not labeled 30 分钟.
+    with db.tx() as conn:
+        instances.set_pool(conn, SYSTEM, "local", concurrency=2)
+    parallel = admin.get("/api/queue")
+    parallel_local = next(pool for pool in parallel["pools"] if pool["name"] == "local")
+    assert parallel_local["eta_seconds"] == 15
+    parallel_ready = {task["id"]: task for task in parallel["ready"]}
+    assert parallel_ready[second["id"]]["eta_seconds"] == 15
+
+
+def test_run_eta_uses_position_times_history(admin, fresh, mock_providers):
+    """GET /api/runs/{id} reports the longest ready-task wait, not the sum of timeouts.
+
+    A published workflow materializes the video node. History of the same provider,
+    template, resolution and duration (9s and 21s, average 15s) makes the queued clip
+    15 seconds. The node's 3600s timeout must not appear as the estimate. A second
+    ready task with a different template stays unestimated and does not inflate the run.
+    """
+    from server import graph
+    from server.samples import ZERO_FIXTURE, seed_samples
+
+    seeded = seed_samples(fresh["workspace_id"])
+    workflow_id = seeded["workflows"]["zero-snow"]["workflow_id"]
+    admin.post(f"/api/workflows/{workflow_id}/versions/1/publish")
+    with db.tx() as conn:
+        conn.execute(update(db.provider_instances).where(db.provider_instances.c.name == "llm.default")
+                     .values(options={"replies": {"adapt": ZERO_FIXTURE}}))
+        instances.set_pool(conn, SYSTEM, "autodl-h3", concurrency=1, paused=True)
+    # zero-snow's video node stores resolution on the node and leaves template empty.
+    # Duration comes from the shot the executor composes (the fixture is 15s).
+    template = ""
+    resolution = "768p横"
+    duration = 15
+    with db.tx() as conn:
+        history_work = graph.create_work(conn, SYSTEM, fresh["workspace_id"], "历史耗时")
+    history_scope = {"workspace_id": fresh["workspace_id"], "work_id": history_work["id"]}
+    for seconds, via in ((9, "request"), (21, "node")):
+        done = _music(history_scope, kind="video", pool="autodl-h3", provider_instance="video.autodl-h3")
+        _finish(done, seconds=seconds, provider="video.autodl-h3", template=template,
+                resolution=resolution, duration=duration, via=via)
+    run = admin.post("/api/runs", {"workflow_id": workflow_id, "inputs": {"passage": "雪原上他替她包好脚"}})
+    run_worker(limit=8)
+    with db.tx() as conn:
+        instances.set_pool(conn, SYSTEM, "autodl-h3", paused=False)
+    detail = admin.get(f"/api/runs/{run['id']}")
+    clip = next(node for node in detail["nodes"] if node["id"] == "clip")["tasks"][0]
+    assert clip["status"] == "ready", clip
+    assert clip["timeout_seconds"] == 3600
+    assert clip["pool"] == "autodl-h3"
+    with db.tx() as conn:
+        stored = dict(conn.execute(select(db.tasks).where(db.tasks.c.id == clip["id"])).mappings().one())
+        from server.engine.eta import historical_average, signature
+
+        assert signature(stored) == ("video.autodl-h3", template, resolution, str(duration)), stored.get("input")
+        average = historical_average(conn, stored)
+        assert average is not None and round(average) == 15, signature(stored)
+    # The page reads this field. Position 1 × 15s average. 3600 is the deadline, not the ETA.
+    assert detail["progress"]["ready"] >= 1
+    assert detail["progress"]["eta_seconds"] == 15
+    assert detail["progress"]["eta_seconds"] != 3600
+    task = admin.get(f"/api/tasks/{clip['id']}")
+    assert task["queue_position"] == 1
+    assert task["eta_seconds"] == 15
+    assert task["timeout_seconds"] == 3600
+    # A queued sibling with another template must not turn the run estimate into a timeout sum.
+    sibling = _music(history_scope, pool="autodl-h3", provider_instance="video.autodl-h3", sort_key="z",
+                     timeout_seconds=3600,
+                     input={"node": {"template": "asset:other@1", "resolution": resolution, "duration_seconds": duration}})
+    with db.tx() as conn:
+        conn.execute(update(db.tasks).where(db.tasks.c.id == sibling["id"]).values(run_id=run["id"], node_id="other"))
+    again = admin.get(f"/api/runs/{run['id']}")
+    assert again["progress"]["eta_seconds"] == 15
+    unmatched = admin.get(f"/api/tasks/{sibling['id']}")
+    assert unmatched["eta_seconds"] is None
+    assert unmatched["timeout_seconds"] == 3600
 
 
 def test_slots_cap_concurrency_and_priority_orders(work):
@@ -51,6 +207,19 @@ def test_slots_cap_concurrency_and_priority_orders(work):
     execute(claimed, "w1")
     assert _claim(["local"])["id"] == first_sorted["id"]
     assert low["status"] == "ready"
+
+
+def test_pool_concurrency_above_64_is_rejected(admin, work):
+    """The editor and the server share the same 0–64 limit. A rejected save must not look applied."""
+    before = admin.get("/api/admin/pools")
+    previous = next(pool for pool in before["items"] if pool["name"] == "local")["concurrency"]
+    rejected = admin.request("PATCH", "/api/admin/pools/local", expect=400, json={"concurrency": 65})
+    assert "64" in rejected.json()["detail"]
+    kept = admin.get("/api/admin/pools")
+    local = next(pool for pool in kept["items"] if pool["name"] == "local")
+    assert local["concurrency"] == previous
+    accepted = admin.patch("/api/admin/pools/local", {"concurrency": 4, "note": "上限内"})
+    assert accepted["concurrency"] == 4
 
 
 def test_paused_pool_is_not_claimed(work):

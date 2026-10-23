@@ -29,5 +29,7 @@
 | cvgen-learn | 让服务下载，agent 不自己下载 |
 | cvgen-style | 锁定可用预设，避开定格和拼贴 |
 | cvgen-zero | 已测过的 15 秒雪原段 |
+| cvgen-library | 把实体提升为素材，跨作品复用，钉版本 |
+| cvgen-workflow | 把跑顺的做法写成工作流 JSON，校验、试跑，交给审计员发布 |
 
 纸艺、定格、拼贴只作为禁止项，不作为正面风格。

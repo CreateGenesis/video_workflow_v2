@@ -285,6 +285,20 @@ def _expand(conn, principal, run, spec, analysis, node, items, by_node, order_in
             task_input["auto_approve"] = bool(node.get("auto_approve") or run["auto_gates"])
         if kind == "video" and node.get("continuity") == "previous_last_frame" and created:
             task_input["prev_task"] = created[-1]["id"]
+        if kind == "video":
+            # §6.5 groups history by the request that will be submitted. Duration lives
+            # on the shot, not on the video node, so record it before the task is queued.
+            resolution = node.get("resolution") or (spec.get("defaults") or {}).get("resolution") or "768p横"
+            duration = None
+            if isinstance(value, EntityRef):
+                shot = graph.get_entity(conn, value.id)
+                if shot:
+                    duration = (shot.get("data") or {}).get("duration")
+            task_input["request"] = {
+                "template": node.get("template") or "",
+                "resolution": resolution,
+                "duration": duration,
+            }
         created.append(task_q.create(
             conn, principal, workspace_id=run["workspace_id"], kind=kind, pool=pool, input=task_input,
             run_id=run["id"], work_id=run["work_id"], node_id=node["id"], item_key=item_key, item_index=item_index,

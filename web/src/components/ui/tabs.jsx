@@ -7,22 +7,24 @@ export function Tabs({ className, ...props }) {
 
 export function TabsList({ className, ...props }) {
   return (
-    <TabsPrimitive.List
-      className={cn("inline-flex h-9 items-center justify-center rounded-lg bg-muted p-1 text-muted-foreground", className)}
-      {...props}
-    />
+    <div className="-mx-1 overflow-x-auto px-1">
+      <TabsPrimitive.List className={cn("flex min-w-max items-center gap-1 border-b", className)} {...props} />
+    </div>
   );
 }
 
-export function TabsTrigger({ className, ...props }) {
+export function TabsTrigger({ className, children, count, ...props }) {
   return (
     <TabsPrimitive.Trigger
       className={cn(
-        "inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium transition-all data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow",
+        "relative -mb-px inline-flex h-9 items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent px-2.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none data-[state=active]:border-primary data-[state=active]:text-foreground",
         className,
       )}
       {...props}
-    />
+    >
+      {children}
+      {count ? <span className="tnum rounded bg-muted px-1.5 text-xs text-muted-foreground">{count}</span> : null}
+    </TabsPrimitive.Trigger>
   );
 }
 

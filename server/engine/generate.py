@@ -82,6 +82,11 @@ def prepare_video(conn, job: Job) -> tuple[dict, dict]:
         "prompt": prompt_override or plan["prompt"], "references": references, "duration": plan["duration"],
         "resolution": resolution, "template": template, "seed": params.pop("seed", None), "params": params,
     }
+    task_q.patch_input(conn, job.id, {"request": {
+        "template": job.node.get("template") or job.input.get("template") or "",
+        "resolution": resolution,
+        "duration": plan["duration"],
+    }})
     shot = graph_view.get(shot_id)
     meta = {"shot_id": shot_id, "shot_title": shot["data"].get("title") or shot_id, "prompt": request["prompt"],
             "warnings": plan["warnings"], "references": [ref["title"] for ref in plan["references"]],

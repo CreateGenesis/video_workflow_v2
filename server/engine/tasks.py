@@ -40,6 +40,20 @@ def get(conn: Connection, task_id: str) -> dict | None:
     return _row(conn, task_id)
 
 
+def patch_input(conn: Connection, task_id: str, patch: dict) -> None:
+    """Merge fields the executor learned while preparing the provider request.
+
+    The queue row is created from the workflow node, which does not yet know the
+    composed duration. §6.5 groups history by the request that was submitted.
+    """
+    row = _row(conn, task_id)
+    if not row:
+        return
+    conn.execute(update(db.tasks).where(db.tasks.c.id == task_id).values(
+        input={**(row.get("input") or {}), **patch},
+    ))
+
+
 def deps_of(conn: Connection, task_id: str) -> list[str]:
     return list(conn.execute(select(db.task_deps.c.depends_on).where(db.task_deps.c.task_id == task_id)).scalars())
 
