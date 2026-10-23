@@ -72,8 +72,8 @@ def compose(graph, shot_id: str, resolution: str = "768p横", extra_refs: list[d
         role = ref["data"].get("role", "")
         if role not in ROLES:
             warnings.append(f"参考 {index} 的用途不在原型里")
-        take = ref["data"].get("take") or "只采用画面中指定的部分"
-        ignore = ref["data"].get("ignore") or "不采用其余内容"
+        take = (ref["data"].get("take") or "").removeprefix("只采用") or "画面中指定的部分"
+        ignore = (ref["data"].get("ignore") or "").removeprefix("不采用") or "其余内容"
         extra = "动作从下文重新开始。" if role == "空间" else ""
         if role == "首帧":
             first_at = index

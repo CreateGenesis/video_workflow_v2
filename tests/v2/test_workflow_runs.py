@@ -181,6 +181,61 @@ def test_dry_runs_and_trial_by_agent(admin, agent, fresh, mock_providers):
     agent.request("POST", "/api/runs", json={"workflow_id": workflow_id, "inputs": {"passage": "x"}}, expect=403)
 
 
+def test_agent_drives_its_own_trial_through_gates_and_reruns(admin, agent, fresh, mock_providers):
+    """Exploration: the agent approves gates and reruns items of its own trial; production gates stay with people."""
+    seeded = seed_samples(fresh["workspace_id"])
+    workflow_id = seeded["workflows"]["product-ad"]["workflow_id"]
+    image = _upload(admin, fresh["workspace_id"])
+    inputs = {"product": "暖杯", "facts": ["三秒加热"], "inspiration": "冬天早晨", "product_images": [image]}
+    trial = agent.post(f"/api/workflows/{workflow_id}/versions/1/trial", {"inputs": inputs})
+    run_worker()
+    detail = agent.get(f"/api/runs/{trial['id']}")
+    assert detail["status"] == "waiting"
+    keyframes = next(node for node in detail["nodes"] if node["id"] == "keyframes")["tasks"]
+    pick = keyframes[1]["output"]["candidates"][1]["entity_id"]
+    decided = agent.post(f"/api/runs/{trial['id']}/gate", {"decision": "approve", "selections": {"keyframes:001": pick}})
+    assert decided["gate"]["status"] == "succeeded"
+    run_worker()
+    assert agent.get(f"/api/runs/{trial['id']}")["status"] == "succeeded"
+    rerun = agent.post(f"/api/runs/{trial['id']}/rerun", {"node": "clips", "item": "000"})
+    assert len(rerun["created"]) >= 2
+    run_worker()
+    assert agent.get(f"/api/runs/{trial['id']}")["status"] == "succeeded"
+    agent.request("POST", f"/api/runs/{trial['id']}/gate", json={"decision": "approve"}, expect=409)
+
+    auto = agent.post(f"/api/workflows/{workflow_id}/versions/1/trial", {"inputs": inputs, "auto_gates": True})
+    run_worker()
+    assert agent.get(f"/api/runs/{auto['id']}")["status"] == "succeeded"
+
+    _publish(admin, workflow_id)
+    production = admin.post("/api/runs", {"workflow_id": workflow_id, "inputs": inputs})
+    run_worker()
+    assert admin.get(f"/api/runs/{production['id']}")["status"] == "waiting"
+    agent.request("POST", f"/api/runs/{production['id']}/gate", json={"decision": "approve"}, expect=403)
+    agent.request("POST", f"/api/runs/{production['id']}/rerun", json={"node": "keyframes", "item": "000"}, expect=403)
+    admin.post(f"/api/runs/{production['id']}/gate", {"decision": "approve"})
+
+
+def test_service_api_can_skip_gates(admin, fresh, mock_providers):
+    seeded = seed_samples(fresh["workspace_id"])
+    workflow_id = seeded["workflows"]["product-ad"]["workflow_id"]
+    _publish(admin, workflow_id)
+    image = _upload(admin, fresh["workspace_id"])
+    created = admin.post("/api/admin/keys", {"name": "下游", "workspace_id": fresh["workspace_id"],
+                                             "scopes": ["runs:write", "runs:read"]})
+    from fastapi.testclient import TestClient
+
+    from server.app import app
+
+    from .conftest import Api
+
+    service = Api(TestClient(app), {"Authorization": f"Bearer {created['key']}"})
+    inputs = {"product": "暖杯", "facts": ["三秒加热"], "inspiration": "冬天早晨", "product_images": [image]}
+    run = service.post("/v1/runs", {"workflow_id": workflow_id, "inputs": inputs, "auto_gates": True}, expect=202)
+    run_worker()
+    assert service.get(f"/v1/runs/{run['id']}")["status"] == "succeeded"
+
+
 def test_llm_repair_loop(admin, fresh, mock_providers):
     seeded = seed_samples(fresh["workspace_id"])
     workflow_id = seeded["workflows"]["zero-snow"]["workflow_id"]

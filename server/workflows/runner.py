@@ -10,6 +10,7 @@ from __future__ import annotations
 import time
 from decimal import Decimal
 
+from fastapi import HTTPException
 from jsonschema import Draft202012Validator
 from sqlalchemy import func, insert, select, text, update
 from sqlalchemy.engine import Connection
@@ -135,8 +136,8 @@ def _materialize_uploads(conn, principal, spec: dict, inputs: dict, work_id: str
             entity = graph.add_entity(conn, principal, work_id, "Reference", {
                 "title": row["label"] or field.get("title") or field_name,
                 "role": item_spec.get("x-role") or "身份",
-                "take": "只采用图中的主体外形和标识",
-                "ignore": "不采用背景和光线",
+                "take": "图中的主体外形和标识",
+                "ignore": "背景和光线",
             }, artifact_id=artifact_id)
             ids.append(entity["id"])
         uploads[field_name] = ids
@@ -435,8 +436,11 @@ def decide_gate(conn: Connection, principal, task_id: str, decision: str, *, not
     if task["status"] != "waiting":
         raise RunError("这个闸门现在不需要审批")
     node = task["input"]["node"]
-    principal.require(f"gates:decide:{node.get('approvers', 'reviewer')}")
     run = get_run(conn, task["run_id"], lock=True)
+    if not owns_trial(principal, run):
+        if principal.kind == "device":
+            raise HTTPException(status_code=403, detail="agent 只能处理自己发起的试跑的闸门；这个闸门请审计员在网页上处理")
+        principal.require(f"gates:decide:{node.get('approvers', 'reviewer')}")
     task = task_q.get(conn, task_id)
     if task["status"] != "waiting":
         raise RunError("这个闸门现在不需要审批")
@@ -469,6 +473,11 @@ def decide_gate(conn: Connection, principal, task_id: str, decision: str, *, not
                   payload={"note": note, "redo": redo or [], "selections": selections or {}})
     advance(conn, run["id"], principal)
     return task_q.get(conn, task_id)
+
+
+def owns_trial(principal, run: dict | None) -> bool:
+    """While exploring, the agent drives its own trial runs end to end: gates, reruns, pause. People audit."""
+    return bool(run) and run["mode"] in ("trial", "dryrun-llm") and run["created_by_id"] == principal.id
 
 
 def _apply_selections(conn, principal, run: dict, gate: dict, selections: dict) -> dict:

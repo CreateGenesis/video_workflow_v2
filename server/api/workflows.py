@@ -14,7 +14,7 @@ from ..auth import Principal, need
 from ..engine import tasks as task_q
 from ..workflows import runner
 from ..workflows.dryrun import compile_run
-from ..workflows.spec import analyze, semantic_check, structure_errors
+from ..workflows.spec import analyze, schema as spec_schema, semantic_check, structure_errors
 from .common import number, task_public, with_urls
 
 router = APIRouter(prefix="/api", tags=["workflows"])
@@ -37,6 +37,7 @@ class VersionPatch(BaseModel):
 class DryRunIn(BaseModel):
     inputs: dict = Field(default_factory=dict)
     level: str = "compile"
+    auto_gates: bool = False
 
 
 class RunIn(BaseModel):
@@ -68,6 +69,10 @@ class GateIn(BaseModel):
 class RerunIn(BaseModel):
     node: str
     item: str = ""
+
+
+class RunGateIn(GateIn):
+    gate: str = ""
 
 
 class FixturesFromRun(BaseModel):
@@ -114,6 +119,12 @@ def _summary(conn, workflow: dict) -> dict:
     )).first()
     return {**workflow, "versions": versions, "published_version": published["version"] if published else None,
             "description": None, "runs": runs[0], "avg_cost_yuan": number(runs[1]) if runs[1] else None}
+
+
+@router.get("/workflow-schema")
+def workflow_schema(principal: Principal = Depends(need("workflows:read"))) -> dict:
+    """The structural JSON Schema for spec v1 (the CLI's `workflow schema`)."""
+    return spec_schema()
 
 
 @router.get("/workflows")
@@ -260,7 +271,7 @@ def trial(workflow_id: str, version: int, body: DryRunIn, principal: Principal =
     with db.tx() as conn:
         _workflow(conn, workflow_id, principal)
         return _run_view(conn, runner.create_run(conn, principal, workflow_id=workflow_id, version=version,
-                                                  inputs=body.inputs, mode="trial"))
+                                                  inputs=body.inputs, mode="trial", auto_gates=body.auto_gates))
 
 
 @router.post("/workflows/{workflow_id}/versions/{version}/fixtures-from-run")
@@ -433,26 +444,51 @@ def cancel(run_id: str, principal: Principal = Depends(need("runs:read"))) -> di
         return _run_view(conn, runner.cancel_run(conn, principal, run_id))
 
 
+def _steerable(conn, run_id: str, principal: Principal) -> dict:
+    """Producers steer any run; an agent steers the trial runs it started itself."""
+    run = _run(conn, run_id, principal)
+    if not (principal.can("runs:create") or runner.owns_trial(principal, run)):
+        raise HTTPException(status_code=403, detail="只能操作自己发起的试跑")
+    return run
+
+
 @router.post("/runs/{run_id}/pause")
-def pause(run_id: str, principal: Principal = Depends(need("runs:create"))) -> dict:
+def pause(run_id: str, principal: Principal = Depends(need("runs:read"))) -> dict:
     with db.tx() as conn:
-        _run(conn, run_id, principal)
+        _steerable(conn, run_id, principal)
         return _run_view(conn, runner.set_paused(conn, principal, run_id, True))
 
 
 @router.post("/runs/{run_id}/resume")
-def resume(run_id: str, principal: Principal = Depends(need("runs:create"))) -> dict:
+def resume(run_id: str, principal: Principal = Depends(need("runs:read"))) -> dict:
     with db.tx() as conn:
-        _run(conn, run_id, principal)
+        _steerable(conn, run_id, principal)
         return _run_view(conn, runner.set_paused(conn, principal, run_id, False))
 
 
 @router.post("/runs/{run_id}/rerun")
-def rerun(run_id: str, body: RerunIn, principal: Principal = Depends(need("runs:create"))) -> dict:
+def rerun(run_id: str, body: RerunIn, principal: Principal = Depends(need("runs:read"))) -> dict:
     with db.tx() as conn:
-        _run(conn, run_id, principal)
+        _steerable(conn, run_id, principal)
         created = runner.rerun_item(conn, principal, run_id, body.node, body.item)
         return {"created": created, "run": _run_view(conn, runner.get_run(conn, run_id))}
+
+
+@router.post("/runs/{run_id}/gate")
+def decide_in_run(run_id: str, body: RunGateIn, principal: Principal = Depends(need("runs:read"))) -> dict:
+    """Decide the gate a run is waiting on without looking up its task id (the CLI's `run gate`)."""
+    with db.tx() as conn:
+        _run(conn, run_id, principal)
+        waiting = [task for task in runner.current_tasks(conn, run_id)
+                   if task["kind"] == "gate" and task["status"] == "waiting" and (not body.gate or task["node_id"] == body.gate)]
+        if not waiting:
+            raise HTTPException(status_code=409, detail="这个运行现在没有等待审批的闸门")
+        if len(waiting) > 1:
+            names = "、".join(task["node_id"] for task in waiting)
+            raise HTTPException(status_code=409, detail=f"有多个闸门在等：{names}，用 --gate 指定")
+        decided = runner.decide_gate(conn, principal, waiting[0]["id"], body.decision, note=body.note,
+                                     selections=body.selections, redo=body.redo)
+        return {"gate": task_public(decided), "run": _run_view(conn, runner.get_run(conn, run_id))}
 
 
 @router.post("/gates/{task_id}")

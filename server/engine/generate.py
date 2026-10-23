@@ -65,8 +65,8 @@ def prepare_video(conn, job: Job) -> tuple[dict, dict]:
         frame = (previous.get("output") or {}).get("last_frame_artifact_id")
         if frame:
             extra.append({"id": frame, "type": "Reference", "artifact_id": frame, "data": {
-                "title": "上一镜尾帧", "role": "空间", "take": "只采用画面里的空间和人物位置",
-                "ignore": "不采用这一帧里已经结束的动作",
+                "title": "上一镜尾帧", "role": "空间", "take": "画面里的空间和人物位置",
+                "ignore": "这一帧里已经结束的动作",
             }})
     resolution = _resolution(job, conn)
     plan = compose(graph_view, shot_id, resolution, extra_refs=extra)

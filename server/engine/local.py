@@ -310,7 +310,7 @@ def run_frame(job: Job) -> None:
         artifact = job.store(conn, dest, kind="frame", label=f"{clip['data'].get('title')} {at}")
         reference = graph.add_entity(conn, job.principal, job.task["work_id"], "Reference", {
             "title": "上一镜尾帧" if at == "last" else f"成片 {at} 帧", "role": role,
-            "take": "只采用画面里的空间和人物位置", "ignore": "不采用这一帧里已经结束的动作",
+            "take": "画面里的空间和人物位置", "ignore": "这一帧里已经结束的动作",
         }, artifact_id=artifact["id"])
         graph.add_link(conn, job.principal, job.task["work_id"], "derived_from", reference["id"], clip["id"], f"抽自 {at}")
         _finish(conn, job, {"artifact_id": artifact["id"], "entity_id": reference["id"], "at": at, "role": role})

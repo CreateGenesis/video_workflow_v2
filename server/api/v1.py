@@ -23,6 +23,7 @@ class RunCreate(BaseModel):
     version: int | None = Field(default=None, description="省略时用最新发布版本")
     inputs: dict = Field(default_factory=dict)
     priority: int = 0
+    auto_gates: bool = Field(default=False, description="闸门全部自动通过（选第一张候选），整条流程不等人")
     callback_url: str = ""
 
 
@@ -31,6 +32,7 @@ class BatchCreate(BaseModel):
     version: int | None = None
     inputs: list[dict]
     priority: int = 0
+    auto_gates: bool = False
     callback_url: str = ""
 
 
@@ -69,7 +71,7 @@ def create_run(body: RunCreate, idempotency_key: str | None = Header(default=Non
                principal: Principal = Depends(need("runs:create"))) -> dict:
     run = workflows.start_run(workflows.RunIn(
         workflow_id=body.workflow_id, version=body.version, inputs=body.inputs, priority=body.priority,
-        callback_url=body.callback_url, idempotency_key=idempotency_key,
+        auto_gates=body.auto_gates, callback_url=body.callback_url, idempotency_key=idempotency_key,
     ), principal)
     return _brief(run)
 
@@ -78,7 +80,7 @@ def create_run(body: RunCreate, idempotency_key: str | None = Header(default=Non
 def create_batch(body: BatchCreate, principal: Principal = Depends(need("runs:create"))) -> dict:
     result = workflows.start_batch(workflows.BatchIn(
         workflow_id=body.workflow_id, version=body.version, inputs=body.inputs, priority=body.priority,
-        callback_url=body.callback_url,
+        auto_gates=body.auto_gates, callback_url=body.callback_url,
     ), principal)
     return {"batch_id": result["batch_id"], "runs": [_brief(run) for run in result["runs"]]}
 

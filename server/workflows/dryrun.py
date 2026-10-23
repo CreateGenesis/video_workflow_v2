@@ -35,8 +35,8 @@ def compile_run(conn: Connection, workspace_id: str, spec: dict, inputs: dict, f
                 row = artifacts.get(conn, artifact_id) if isinstance(artifact_id, str) else None
                 ids.append(memory.add_entity("Reference", {
                     "title": (row or {}).get("label") or field.get("title") or field_name,
-                    "role": item_spec.get("x-role") or "身份", "take": "只采用图中的主体外形和标识",
-                    "ignore": "不采用背景和光线",
+                    "role": item_spec.get("x-role") or "身份", "take": "图中的主体外形和标识",
+                    "ignore": "背景和光线",
                 }, artifact_id=artifact_id))
             uploads[field_name] = ids
     run = {"id": "dryrun", "inputs": inputs, "context": {"uploads": uploads}, "workspace_id": workspace_id}

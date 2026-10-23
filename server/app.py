@@ -76,11 +76,23 @@ def _skill_files() -> dict[str, Path]:
 
 @app.get("/api/skills")
 def skills(principal: Principal = Depends(current_principal)) -> dict:
+    hints = _index_hints()
     items = []
     for name, path in _skill_files().items():
         first = next((line.strip("# ").strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()), name)
-        items.append({"name": name, "title": first})
+        items.append({"name": name, "title": first, "when": hints.get(name, "")})
     return {"items": items}
+
+
+def _index_hints() -> dict[str, str]:
+    """“什么时候读” from the table in cvgen-index.md, so `skill list` says more than the file name."""
+    index = SKILLS / "cvgen-index.md"
+    hints = {}
+    for line in index.read_text(encoding="utf-8").splitlines() if index.is_file() else []:
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) == 2 and cells[0].startswith("cvgen-"):
+            hints[cells[0]] = cells[1]
+    return hints
 
 
 @app.get("/api/skills/{name}", response_class=PlainTextResponse)
