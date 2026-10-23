@@ -73,3 +73,13 @@ label: 派生自已有成片或参考
 from: Edit
 to: Clip
 label: 时间线使用这条成片
+
+## clip_of
+from: Clip
+to: Shot
+label: 这一镜生成的成片
+
+## line_of
+from: Clip
+to: Line
+label: 这句台词的配音

@@ -2,7 +2,7 @@
 
 Revision ID: 0001
 Revises: 
-Create Date: 2026-10-22 16:18:24.642705
+Create Date: 2026-10-23 02:48:42.737810
 """
 
 from __future__ import annotations
@@ -312,6 +312,8 @@ def upgrade() -> None:
     sa.Column('priority', sa.Integer(), server_default=sa.text('0'), nullable=False),
     sa.Column('work_id', sa.Text(), nullable=True),
     sa.Column('outputs', postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'::jsonb"), nullable=False),
+    sa.Column('context', postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'::jsonb"), nullable=False),
+    sa.Column('auto_gates', sa.Boolean(), server_default=sa.text('false'), nullable=False),
     sa.Column('error', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
     sa.Column('cost_estimate', sa.Numeric(precision=12, scale=4), server_default=sa.text('0'), nullable=False),
     sa.Column('cost_actual', sa.Numeric(precision=12, scale=4), server_default=sa.text('0'), nullable=False),
@@ -382,6 +384,7 @@ def upgrade() -> None:
     sa.Column('sort_key', sa.Text(), server_default='', nullable=False),
     sa.Column('attempts', sa.Integer(), server_default=sa.text('0'), nullable=False),
     sa.Column('max_attempts', sa.Integer(), server_default=sa.text('1'), nullable=False),
+    sa.Column('retry_safe', sa.Boolean(), server_default=sa.text('true'), nullable=False),
     sa.Column('backoff_seconds', sa.Integer(), server_default=sa.text('30'), nullable=False),
     sa.Column('timeout_seconds', sa.Integer(), server_default=sa.text('1800'), nullable=False),
     sa.Column('lease_owner', sa.Text(), nullable=True),

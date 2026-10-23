@@ -1,128 +1,174 @@
-"""The command catalog. The binary reads this; it does not keep its own command table."""
+"""Command catalog served to the cvgen CLI (GET /api/cli). The CLI executes these generically.
+
+Each argument says where its value comes from and where it goes:
+- source: positional (position, variadic), flag (--name), or context (work / workspace, kept locally by
+  `cvgen work use` / `cvgen workspace use`);
+- type: string, int, float, bool (flag without value), json (inline JSON, @file, or - for stdin), list
+  (comma-separated, or the rest of the positionals when variadic);
+- in: path ({name} in the path), query, body, or input (body["input"][name]).
+Commands marked local are implemented in the client (login, wait loops, downloads, uploads).
+"""
 
 from __future__ import annotations
 
-
-def commands() -> list[dict]:
-    return [
-        {"name": "ontology", "usage": "cvgen ontology", "method": "GET", "path": "/api/ontology", "args": []},
-        {"name": "entity add", "usage": "cvgen entity add <类型> <JSON>", "method": "POST", "path": "/api/entity", "args": [
-            {"name": "type", "position": 0, "file": False},
-            {"name": "data", "position": 1, "file": False, "json": True},
-        ]},
-        {"name": "entity get", "usage": "cvgen entity get <实体>", "method": "GET", "path": "/api/entity/{0}", "args": [{"name": "id", "position": 0, "file": False}]},
-        {"name": "entity query", "usage": "cvgen entity query [类型]", "method": "GET", "path": "/api/entities", "args": [{"name": "type", "position": 0, "file": False, "optional": True, "query": "type"}]},
-        {"name": "link", "usage": "cvgen link <关系> <来源> <目标> [说明]", "method": "POST", "path": "/api/link", "args": [
-            {"name": "name", "position": 0, "file": False},
-            {"name": "source_id", "position": 1, "file": False},
-            {"name": "target_id", "position": 2, "file": False},
-            {"name": "note", "position": 3, "file": False, "optional": True},
-        ]},
-        {"name": "derive", "usage": "cvgen derive <来源> <目标> [说明]", "method": "POST", "path": "/api/derive", "args": [
-            {"name": "source_id", "position": 0, "file": False},
-            {"name": "target_id", "position": 1, "file": False},
-            {"name": "note", "position": 2, "file": False, "optional": True},
-        ]},
-        {"name": "shot compose", "usage": "cvgen shot compose <镜头> [分辨率]", "method": "GET", "path": "/api/shot/{0}/compose", "args": [
-            {"name": "shot", "position": 0, "file": False},
-            {"name": "resolution", "position": 1, "file": False, "optional": True, "query": "resolution"},
-        ]},
-        {"name": "story", "usage": "cvgen story", "method": "POST", "path": "/api/stories/zero", "args": []},
-        {"name": "generate", "usage": "cvgen generate <镜头> [分辨率]", "method": "POST", "path": "/api/generate", "args": [
-            {"name": "shot_id", "position": 0, "file": False},
-            {"name": "resolution", "position": 1, "file": False, "optional": True},
-        ]},
-        {"name": "tts", "usage": "cvgen tts <台词>", "method": "POST", "path": "/api/tts", "args": [{"name": "target_id", "position": 0, "file": False}]},
-        {"name": "pull", "usage": "cvgen pull <地址> [角色]", "method": "POST", "path": "/api/pull", "args": [
-            {"name": "url", "position": 0, "file": False, "body": "detail.url"},
-            {"name": "role", "position": 1, "file": False, "optional": True, "body": "detail.role"},
-        ]},
-        {"name": "inspect", "usage": "cvgen inspect <成片>", "method": "POST", "path": "/api/inspect", "args": [{"name": "target_id", "position": 0, "file": False}]},
-        {"name": "reverse", "usage": "cvgen reverse <实体>", "method": "POST", "path": "/api/reverse", "args": [{"name": "target_id", "position": 0, "file": False}]},
-        {"name": "learn", "usage": "cvgen learn <地址>", "method": "POST", "path": "/api/learn", "args": [
-            {"name": "url", "position": 0, "file": False, "body": "detail.url"},
-            {"name": "role", "const": "风格", "body": "detail.role"},
-        ]},
-        {"name": "style extract", "usage": "cvgen style extract <成片>", "method": "POST", "path": "/api/style", "args": [{"name": "target_id", "position": 0, "file": False}]},
-        {"name": "reference upload", "usage": "cvgen reference upload <文件> --role <用途>", "method": "POST", "path": "/api/reference", "file": True, "args": [
-            {"name": "file", "position": 0, "file": True},
-            {"name": "role", "flag": "--role", "file": False},
-            {"name": "title", "flag": "--title", "file": False, "optional": True},
-        ]},
-        {"name": "reference frame", "usage": "cvgen reference frame <成片> [--at first|last] [--role 用途]", "method": "POST", "path": "/api/frame", "args": [
-            {"name": "target_id", "position": 0, "file": False},
-            {"name": "at", "flag": "--at", "file": False, "optional": True, "body": "detail.at"},
-            {"name": "role", "flag": "--role", "file": False, "optional": True, "body": "detail.role"},
-        ]},
-        {"name": "preview", "usage": "cvgen preview <实体>", "method": "GET", "path": "/api/preview/{0}", "args": [{"name": "id", "position": 0, "file": False}]},
-        {"name": "media upload", "usage": "cvgen media upload <文件> --kind image|video|audio", "method": "POST", "path": "/api/media", "file": True, "args": [
-            {"name": "file", "position": 0, "file": True},
-            {"name": "kind", "flag": "--kind", "file": False},
-            {"name": "title", "flag": "--title", "file": False, "optional": True},
-            {"name": "role", "flag": "--role", "file": False, "optional": True},
-        ]},
-        {"name": "media get", "usage": "cvgen media get <对象键>", "method": "GET", "path": "/media/{0}", "binary": True, "args": [{"name": "key", "position": 0, "file": False}]},
-        {"name": "media", "usage": "cvgen media <对象键>", "method": "GET", "path": "/media/{0}", "binary": True, "args": [{"name": "key", "position": 0, "file": False}]},
-        {"name": "image", "usage": "cvgen image <镜头> [--role 用途]", "method": "POST", "path": "/api/image", "args": [
-            {"name": "target_id", "position": 0, "file": False},
-            {"name": "role", "flag": "--role", "file": False, "optional": True, "body": "detail.role"},
-        ]},
-        {"name": "music", "usage": "cvgen music <文本>", "method": "POST", "path": "/api/music", "args": [{"name": "text", "position": 0, "file": False, "body": "detail.text"}]},
-        {"name": "check", "usage": "cvgen check <成片>", "method": "POST", "path": "/api/check", "args": [{"name": "target_id", "position": 0, "file": False}]},
-        {"name": "probe", "usage": "cvgen probe [video|image|music]", "method": "POST", "path": "/api/provider/probe", "reader": True, "args": [{"name": "capability", "position": 0, "file": False, "optional": True}]},
-        {"name": "model list", "usage": "cvgen model list [--capability video|image|music]", "method": "POST", "path": "/api/provider/models", "reader": True, "args": [{"name": "capability", "flag": "--capability", "file": False, "optional": True}]},
-        {"name": "model use", "usage": "cvgen model use <模型> [--capability video|image|music]", "method": "POST", "path": "/api/provider/model", "reader": True, "args": [
-            {"name": "source", "position": 0, "file": False},
-            {"name": "capability", "flag": "--capability", "file": False, "optional": True},
-        ]},
-        {"name": "ffmpeg", "usage": "cvgen ffmpeg -- <参数>...", "method": "POST", "path": "/api/ffmpeg", "args": [{"name": "args", "position": 0, "file": False, "rest": True, "body": "detail.args"}]},
-        {"name": "edit join", "usage": "cvgen edit join <成片>...", "method": "POST", "path": "/api/edit", "args": [{"name": "clips", "position": 0, "file": False, "rest": True, "body": "detail.clips"}, {"name": "fade", "flag": "--fade", "file": False, "optional": True, "body": "detail.fade"}, {"name": "op", "const": "join", "body": "detail.op"}]},
-        {"name": "edit export", "usage": "cvgen edit export <剪辑>", "method": "POST", "path": "/api/edit", "args": [{"name": "target_id", "position": 0, "file": False}, {"name": "op", "const": "export", "body": "detail.op"}]},
-        {"name": "edit mix", "usage": "cvgen edit mix <剪辑>", "method": "POST", "path": "/api/edit", "args": [{"name": "target_id", "position": 0, "file": False}, {"name": "op", "const": "mix", "body": "detail.op"}]},
-        {"name": "edit subtitle", "usage": "cvgen edit subtitle <剪辑>", "method": "POST", "path": "/api/edit", "args": [{"name": "target_id", "position": 0, "file": False}, {"name": "op", "const": "subtitle", "body": "detail.op"}]},
-        {"name": "job show", "usage": "cvgen job show <任务>", "method": "GET", "path": "/api/job/{0}", "args": [{"name": "id", "position": 0, "file": False}]},
-        {"name": "job wait", "usage": "cvgen job wait <任务>", "method": "GET", "path": "/api/job/{0}", "wait": True, "args": [{"name": "id", "position": 0, "file": False}]},
-        {"name": "skill list", "usage": "cvgen skill list", "method": "GET", "path": "/api/skills", "args": []},
-        {"name": "skill show", "usage": "cvgen skill show <名称>", "method": "GET", "path": "/api/skills/{0}", "args": [{"name": "name", "position": 0, "file": False}]},
-        {"name": "canvas", "usage": "cvgen canvas", "method": "GET", "path": "/api/work/current", "args": []},
-        {"name": "batch show", "usage": "cvgen batch show <作品>", "method": "GET", "path": "/api/batch/{0}", "args": [{"name": "id", "position": 0, "file": False}]},
-        {"name": "workspace list", "usage": "cvgen workspace list", "method": "GET", "path": "/api/workspaces", "args": []},
-        {"name": "workspace add", "usage": "cvgen workspace add <名称>", "method": "POST", "path": "/api/workspaces", "args": [{"name": "title", "position": 0, "file": False}]},
-        {"name": "workspace rename", "usage": "cvgen workspace rename <工作区> <名称>", "method": "POST", "path": "/api/workspaces/{0}/rename", "args": [
-            {"name": "id", "position": 0, "file": False},
-            {"name": "title", "position": 1, "file": False},
-        ]},
-        {"name": "workspace use", "usage": "cvgen workspace use <工作区>", "method": "POST", "path": "/api/workspaces/use", "args": [{"name": "id", "position": 0, "file": False}]},
-        {"name": "work list", "usage": "cvgen work list", "method": "GET", "path": "/api/works", "args": []},
-        {"name": "work", "usage": "cvgen work <名称> [类型] [简介]", "method": "POST", "path": "/api/works", "args": [
-            {"name": "title", "position": 0, "file": False},
-            {"name": "kind", "position": 1, "file": False, "optional": True},
-            {"name": "brief", "position": 2, "file": False, "optional": True},
-        ]},
-        {"name": "work add", "usage": "cvgen work add <名称> [类型] [简介]", "method": "POST", "path": "/api/works", "args": [
-            {"name": "title", "position": 0, "file": False},
-            {"name": "kind", "position": 1, "file": False, "optional": True},
-            {"name": "brief", "position": 2, "file": False, "optional": True},
-        ]},
-        {"name": "work use", "usage": "cvgen work use <作品>", "method": "POST", "path": "/api/works/use", "args": [{"name": "id", "position": 0, "file": False}]},
-        {"name": "retry", "usage": "cvgen retry <任务>", "method": "POST", "path": "/api/jobs/{0}/retry", "args": [{"name": "id", "position": 0, "file": False}]},
-        {"name": "prompt show", "usage": "cvgen prompt show <镜头>", "method": "GET", "path": "/api/shots/{0}/prompt", "args": [{"name": "id", "position": 0, "file": False}]},
-        {"name": "prompt save", "usage": "cvgen prompt save <镜头> <文本>", "method": "POST", "path": "/api/shots/{0}/prompt", "args": [
-            {"name": "id", "position": 0, "file": False},
-            {"name": "text", "position": 1, "file": False},
-        ]},
-        {"name": "prompt restore", "usage": "cvgen prompt restore <镜头> <序号>", "method": "POST", "path": "/api/shots/{0}/prompt/restore", "args": [
-            {"name": "id", "position": 0, "file": False},
-            {"name": "index", "position": 1, "file": False},
-        ]},
-        {"name": "redraw", "usage": "cvgen redraw <参考>", "method": "POST", "path": "/api/images/{0}/redraw", "args": [{"name": "id", "position": 0, "file": False}]},
-        {"name": "layout save", "usage": "cvgen layout save <JSON>", "method": "POST", "path": "/api/layout", "args": [{"name": "positions", "position": 0, "file": False, "json": True}]},
-        {"name": "layout tidy", "usage": "cvgen layout tidy", "method": "POST", "path": "/api/layout/tidy", "args": []},
-    ]
+SCHEMA_VERSION = 2
+MIN_CLIENT = "0.2.0"
 
 
-def find(name: str) -> dict | None:
-    for item in commands():
-        if item["name"] == name:
-            return item
-    return None
+def pos(name: str, position: int, *, into: str = "body", type: str = "string", required: bool = True,
+        variadic: bool = False, help: str = "") -> dict:
+    return {"name": name, "source": "positional", "position": position, "in": into, "type": type,
+            "required": required, "variadic": variadic, "help": help}
+
+
+def flag(name: str, flag_name: str, *, into: str = "body", type: str = "string", required: bool = False,
+         default=None, help: str = "") -> dict:
+    spec = {"name": name, "source": "flag", "flag": flag_name, "in": into, "type": type, "required": required, "help": help}
+    if default is not None:
+        spec["default"] = default
+    return spec
+
+
+def ctx(name: str, context: str, *, into: str = "path") -> dict:
+    return {"name": name, "source": "context", "context": context, "in": into, "type": "string", "required": True}
+
+
+def cmd(name: str, usage: str, summary: str, method: str, path: str, args: list[dict] | None = None,
+        body: dict | None = None, local: bool = False) -> dict:
+    return {"name": name, "usage": usage, "summary": summary, "method": method, "path": path, "args": args or [],
+            "body": body or {}, "local": local}
+
+
+def task(name: str, usage: str, summary: str, kind: str, args: list[dict]) -> dict:
+    return cmd(name, usage, summary, "POST", "/api/works/{work}/tasks", [ctx("work", "work"), *args], body={"kind": kind})
+
+
+COMMANDS = [
+    cmd("login", "cvgen login --base 服务地址 [--name 这台机器的名字]", "设备授权登录，等网页批准", "POST", "/api/device/start", local=True),
+    cmd("logout", "cvgen logout", "删除本机凭证", "POST", "", local=True),
+    cmd("status", "cvgen status", "当前登录、工作区、作品", "GET", "/api/auth/me", local=True),
+    cmd("version", "cvgen version", "客户端版本", "GET", "", local=True),
+    cmd("workspace list", "cvgen workspace list", "列出工作区", "GET", "/api/workspaces"),
+    cmd("workspace use", "cvgen workspace use <工作区id>", "记住当前工作区（只存在本机）", "GET", "", local=True),
+    cmd("work list", "cvgen work list", "列出当前工作区的作品", "GET", "/api/works",
+        [ctx("workspace_id", "workspace", into="query"), flag("origin", "--origin", into="query", help="explore 或 run")]),
+    cmd("work new", "cvgen work new <名称> [--kind 短片|广告] [--brief 主题]", "新建作品并设为当前作品", "POST", "/api/works",
+        [ctx("workspace_id", "workspace", into="body"), pos("title", 0), flag("kind", "--kind"), flag("brief", "--brief")]),
+    cmd("work use", "cvgen work use <作品id>", "记住当前作品（只存在本机）", "GET", "", local=True),
+    cmd("work show", "cvgen work show", "当前作品的实体、关系和任务", "GET", "/api/works/{work}", [ctx("work", "work")]),
+    cmd("storyboard", "cvgen storyboard [--resolution 768p横]", "按镜头顺序看提示词、参考、成片和花费", "GET",
+        "/api/works/{work}/storyboard", [ctx("work", "work"), flag("resolution", "--resolution", into="query")]),
+    cmd("entity add", "cvgen entity add <类型> <JSON> [--artifact 文件id]", "在当前作品里加实体", "POST",
+        "/api/works/{work}/entities", [ctx("work", "work"), pos("type", 0), pos("data", 1, type="json"),
+                                       flag("artifact_id", "--artifact")]),
+    cmd("entity show", "cvgen entity show <实体id>", "看一个实体和它的关系", "GET", "/api/entities/{id}",
+        [pos("id", 0, into="path")]),
+    cmd("entity set", "cvgen entity set <实体id> <JSON> [--replace]", "修改实体字段（默认合并）", "PATCH", "/api/entities/{id}",
+        [pos("id", 0, into="path"), pos("data", 1, type="json"), flag("replace", "--replace", type="bool")]),
+    cmd("entity rm", "cvgen entity rm <实体id>", "删除实体（软删除，连带关系）", "DELETE", "/api/entities/{id}",
+        [pos("id", 0, into="path")]),
+    cmd("link", "cvgen link <关系> <起点> <终点> [说明]", "连关系。终点可以是实体 id 或 asset:名称@版本", "POST",
+        "/api/works/{work}/links", [ctx("work", "work"), pos("name", 0), pos("source", 1), pos("target", 2),
+                                    pos("note", 3, required=False)]),
+    cmd("unlink", "cvgen unlink <关系id>", "删除一条关系", "DELETE", "/api/links/{id}", [pos("id", 0, into="path")]),
+    cmd("shot compose", "cvgen shot compose <镜头> [--resolution 768p横]", "组合四段式提示词，不提交", "GET",
+        "/api/entities/{shot}/compose", [pos("shot", 0, into="path"), flag("resolution", "--resolution", into="query")]),
+    cmd("shot prompt", "cvgen shot prompt <镜头> <新的主动作>", "保存一版新的主动作文字", "POST", "/api/entities/{shot}/prompt",
+        [pos("shot", 0, into="path"), pos("text", 1)]),
+    task("generate", "cvgen generate <镜头> [--resolution 768p横] [--force] [--again] [--provider video.x] [--template asset:x@1]",
+         "提交生视频。有组合警告时要 --force；已成片要再生成一版要 --again", "video",
+         [pos("shot_id", 0, into="input"), flag("resolution", "--resolution", into="input"),
+          flag("allow_warnings", "--force", into="input", type="bool"), flag("again", "--again", type="bool"),
+          flag("provider", "--provider"), flag("template", "--template", into="input")]),
+    task("image", "cvgen image <镜头> [--role 首帧] [--prompt 描述] [--n 2] [--ref 文件id,文件id]", "生图并连到镜头", "image",
+         [pos("shot_id", 0, into="input"), flag("role", "--role", into="input", default="细节"),
+          flag("prompt", "--prompt", into="input"), flag("n", "--n", into="input", type="int"),
+          flag("references", "--ref", into="input", type="list"), flag("provider", "--provider")]),
+    task("tts", "cvgen tts <台词> <音色>", "给一句台词配音。音色是实体 id 或 asset:名称@版本", "tts",
+         [pos("line_id", 0, into="input"), pos("voice", 1, into="input"), flag("provider", "--provider")]),
+    task("music", "cvgen music <描述> [--lyrics 歌词] [--duration 秒]", "生成配乐", "music",
+         [pos("prompt", 0, into="input"), flag("lyrics", "--lyrics", into="input"),
+          flag("duration", "--duration", into="input", type="int"), flag("provider", "--provider")]),
+    task("pull", "cvgen pull <地址> [--role 风格] [--learn] [--title 名称]", "让服务下载网上的图或片子入库", "pull",
+         [pos("url", 0, into="input"), flag("role", "--role", into="input"), flag("learn", "--learn", into="input", type="bool"),
+          flag("title", "--title", into="input")]),
+    task("inspect", "cvgen inspect <实体> [--mode inspect|reverse|style]", "量时长、声音、接触表；reverse 出复述草稿", "inspect",
+         [pos("entity_id", 0, into="input"), flag("mode", "--mode", into="input")]),
+    task("frame", "cvgen frame <成片> [--at last|first|秒] [--role 空间]", "抽一帧作为参考", "frame",
+         [pos("clip_id", 0, into="input"), flag("at", "--at", into="input"), flag("role", "--role", into="input")]),
+    task("check", "cvgen check <成片> [--resolution 768p横]", "核对时长、分辨率、声音，出接触表", "check",
+         [pos("clip_id", 0, into="input"), flag("resolution", "--resolution", into="input")]),
+    task("edit", "cvgen edit <成片...> [--fade 秒] [--music 成片或asset:] [--narration 成片] [--subtitle 台词JSON] [--export 分辨率] [--title 名称]",
+         "拼接、混音、字幕、导出", "edit",
+         [pos("clips", 0, into="input", type="list", variadic=True), flag("fade", "--fade", into="input", type="float"),
+          flag("music", "--music", into="input"), flag("narration", "--narration", into="input"),
+          flag("lines", "--subtitle", into="input", type="json"), flag("export", "--export", into="input"),
+          flag("title", "--title", into="input")]),
+    task("ffmpeg", "cvgen ffmpeg [--input 名=文件id,…] [--output 文件名,…] -- <ffmpeg 参数…>",
+         "管理员打开透传后，在任务目录里跑 ffmpeg", "ffmpeg",
+         [pos("args", 0, into="input", type="list", variadic=True), flag("inputs", "--input", into="input", type="list"),
+          flag("outputs", "--output", into="input", type="list")]),
+    cmd("upload", "cvgen upload <文件> [--label 名称]", "上传本机文件，返回文件 id", "POST", "/api/uploads",
+        [ctx("workspace_id", "workspace", into="body"), pos("file", 0), flag("label", "--label")], local=True),
+    cmd("media get", "cvgen media get <文件id> -o <保存路径>", "下载成片、接触表、参考图", "GET", "/media/{id}", local=True),
+    cmd("job list", "cvgen job list [--status ready,running]", "当前作品的任务", "GET", "/api/tasks",
+        [ctx("work_id", "work", into="query"), flag("status", "--status", into="query")]),
+    cmd("job show", "cvgen job show <任务id>", "任务详情、排队位置、产物链接", "GET", "/api/tasks/{id}", [pos("id", 0, into="path")]),
+    cmd("job wait", "cvgen job wait <任务id> [--timeout 秒]", "一直等到任务结束，持续打印进度", "GET", "/api/tasks/{id}/wait", local=True),
+    cmd("job cancel", "cvgen job cancel <任务id>", "取消任务", "POST", "/api/tasks/{id}/cancel", [pos("id", 0, into="path")]),
+    cmd("job retry", "cvgen job retry <任务id>", "失败或取消的探索任务再跑一次", "POST", "/api/tasks/{id}/retry",
+        [pos("id", 0, into="path")]),
+    cmd("asset list", "cvgen asset list [--kind Style]", "素材库", "GET", "/api/assets",
+        [ctx("workspace_id", "workspace", into="query"), flag("kind", "--kind", into="query")]),
+    cmd("asset show", "cvgen asset show <名称>", "素材的全部版本", "GET", "/api/assets/{workspace}/{name}",
+        [ctx("workspace", "workspace"), pos("name", 0, into="path")]),
+    cmd("asset save", "cvgen asset save <名称> <类型> <JSON> [--artifact 文件id] [--note 说明]", "新建素材或追加一个版本", "POST",
+        "/api/assets", [ctx("workspace_id", "workspace", into="body"), pos("name", 0), pos("kind", 1),
+                        pos("data", 2, type="json"), flag("artifact_id", "--artifact"), flag("note", "--note")]),
+    cmd("asset promote", "cvgen asset promote <实体> <素材名> [--note 说明]", "把作品里的实体提升为素材库的新版本", "POST",
+        "/api/assets/promote", [pos("entity_id", 0), pos("name", 1), flag("note", "--note")]),
+    cmd("workflow list", "cvgen workflow list", "工作流和版本", "GET", "/api/workflows", [ctx("workspace_id", "workspace", into="query")]),
+    cmd("workflow draft", "cvgen workflow draft <规格.json> [--notes 说明] [--from-work]", "提交一个新的草稿版本", "POST",
+        "/api/workflows", [ctx("workspace_id", "workspace", into="body"), pos("spec", 0, type="json"),
+                           flag("notes", "--notes"), flag("source_work_id", "--from-work")]),
+    cmd("workflow show", "cvgen workflow show <工作流id> <版本>", "看规格、校验结果、样例", "GET",
+        "/api/workflows/{id}/versions/{version}", [pos("id", 0, into="path"), pos("version", 1, into="path")]),
+    cmd("workflow update", "cvgen workflow update <工作流id> <版本> <规格.json>", "修改草稿", "PUT",
+        "/api/workflows/{id}/versions/{version}", [pos("id", 0, into="path"), pos("version", 1, into="path"),
+                                                   pos("spec", 2, type="json")]),
+    cmd("workflow validate", "cvgen workflow validate <工作流id> <版本> [--env]", "结构和语义校验；--env 核对 GPU 机环境", "POST",
+        "/api/workflows/{id}/versions/{version}/validate", [pos("id", 0, into="path"), pos("version", 1, into="path"),
+                                                            flag("check_env", "--env", into="query", type="bool")]),
+    cmd("workflow dry-run", "cvgen workflow dry-run <工作流id> <版本> <输入.json> [--level compile|llm]",
+        "不花钱编译全部提示词和估算；llm 级只真实调用大模型", "POST", "/api/workflows/{id}/versions/{version}/dry-run",
+        [pos("id", 0, into="path"), pos("version", 1, into="path"), pos("inputs", 2, type="json"),
+         flag("level", "--level", default="compile")]),
+    cmd("workflow trial", "cvgen workflow trial <工作流id> <版本> <输入.json>", "完整试跑一次（会花钱）", "POST",
+        "/api/workflows/{id}/versions/{version}/trial", [pos("id", 0, into="path"), pos("version", 1, into="path"),
+                                                         pos("inputs", 2, type="json")]),
+    cmd("workflow fixtures", "cvgen workflow fixtures <工作流id> <版本> --from-run <运行id>", "把一次运行的大模型输出存成试跑样例",
+        "POST", "/api/workflows/{id}/versions/{version}/fixtures-from-run",
+        [pos("id", 0, into="path"), pos("version", 1, into="path"), flag("run_id", "--from-run", required=True)]),
+    cmd("workflow diff", "cvgen workflow diff <工作流id> <旧版本> <新版本>", "两个版本的差异", "GET", "/api/workflows/{id}/diff",
+        [pos("id", 0, into="path"), pos("base", 1, into="query"), pos("head", 2, into="query")]),
+    cmd("run list", "cvgen run list [--status running]", "运行列表", "GET", "/api/runs",
+        [ctx("workspace_id", "workspace", into="query"), flag("status", "--status", into="query")]),
+    cmd("run show", "cvgen run show <运行id>", "阶段、每条产物、花费", "GET", "/api/runs/{id}", [pos("id", 0, into="path")]),
+    cmd("run wait", "cvgen run wait <运行id> [--timeout 秒]", "等到运行结束或停在闸门", "GET", "/api/runs/{id}", local=True),
+    cmd("run cancel", "cvgen run cancel <运行id>", "取消运行", "POST", "/api/runs/{id}/cancel", [pos("id", 0, into="path")]),
+    cmd("review list", "cvgen review list [--all]", "审计员给当前作品的意见", "GET", "/api/notes",
+        [ctx("work_id", "work", into="query"), flag("all", "--all", into="query", type="bool")]),
+    cmd("review resolve", "cvgen review resolve <意见id>", "处理完一条意见", "POST", "/api/notes/{id}/resolve",
+        [pos("id", 0, into="path")]),
+    cmd("cost", "cvgen cost [--group day|work|run]", "花费汇总", "GET", "/api/costs",
+        [ctx("workspace_id", "workspace", into="query"), flag("group", "--group", into="query", default="day")]),
+    cmd("queue", "cvgen queue", "各资源池占用和排队", "GET", "/api/queue"),
+    cmd("skill list", "cvgen skill list", "操作手册目录", "GET", "/api/skills"),
+    cmd("skill show", "cvgen skill show <名称>", "读一份操作手册（原文输出）", "GET", "/api/skills/{name}",
+        [pos("name", 0, into="path")]),
+    cmd("ontology", "cvgen ontology", "实体类型、关系和约束", "GET", "/api/ontology"),
+]
+
+
+def catalog() -> dict:
+    return {"schema_version": SCHEMA_VERSION, "min_client": MIN_CLIENT, "commands": COMMANDS}

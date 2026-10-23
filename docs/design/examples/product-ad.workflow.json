@@ -19,11 +19,11 @@
     }
   },
   "assets": {
-    "style": "asset:style-brand-clean@2",
+    "style": "asset:style-brand-clean@1",
     "camera": "asset:camera-slow-push@1",
-    "script_prompt": "asset:prompt-ad-script@3",
+    "script_prompt": "asset:prompt-ad-script@1",
     "shot_list": "asset:schema-shot-list@1",
-    "i2v": "asset:comfy-wan-i2v@2",
+    "i2v": "asset:comfy-wan-i2v@1",
     "music_bed": "asset:music-bright-bed@1"
   },
   "defaults": {"resolution": "768p横", "duration_seconds": 5},

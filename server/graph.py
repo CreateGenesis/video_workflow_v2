@@ -196,8 +196,8 @@ def add_link(
         "target_kind": kind, "target_id": target_id, "target_version": version, "note": note or "",
         "ord": ord, "created_by": _actor(principal),
     }
-    stmt = pg_insert(db.links).values(**row).on_conflict_do_nothing()
-    created = conn.execute(stmt).rowcount
+    stmt = pg_insert(db.links).values(**row).on_conflict_do_nothing().returning(db.links.c.id)
+    created = conn.execute(stmt).scalar()
     if not created:
         existing = conn.execute(select(db.links).where(
             db.links.c.work_id == work_id, db.links.c.name == name, db.links.c.source_id == source_id,

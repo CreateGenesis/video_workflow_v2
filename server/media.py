@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -11,9 +12,9 @@ class MediaError(RuntimeError):
     pass
 
 
-def _run(args: list[str], timeout: int = 120) -> subprocess.CompletedProcess:
+def _run(args: list[str], timeout: int = 120, cwd: Path | None = None) -> subprocess.CompletedProcess:
     try:
-        return subprocess.run(args, capture_output=True, timeout=timeout, check=False)
+        return subprocess.run(args, capture_output=True, timeout=timeout, check=False, cwd=cwd)
     except subprocess.TimeoutExpired as exc:
         raise MediaError("ffmpeg 超时") from exc
 
@@ -69,8 +70,11 @@ def loudness(path: Path) -> str:
     return "；".join(lines)
 
 
-def join(sources: list[Path], dest: Path, fade: float = 2.0) -> None:
-    """Hard-cut the pictures, then fade the ending. Video-only inputs stay video-only."""
+def join(sources: list[Path], dest: Path, fade: float = 2.0, size: tuple[int, int] | None = None, fps: int = 24) -> None:
+    """Hard-cut the pictures, then fade the ending. Video-only inputs stay video-only.
+
+    Every source is letterboxed to `size` (default: the first source's size) at `fps`.
+    """
     if len(sources) < 2:
         raise MediaError("拼接至少要两条成片")
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -79,15 +83,15 @@ def join(sources: list[Path], dest: Path, fade: float = 2.0) -> None:
     if duration <= 0:
         raise MediaError("成片没有可测量的时长")
     fade = min(max(fade, 0), 3, duration)
+    width, height = size or (probed[0].get("width") or 1366, probed[0].get("height") or 768)
+    width, height = int(width) // 2 * 2, int(height) // 2 * 2
     start = max(0, duration - fade)
     cmd = ["ffmpeg", "-y", "-v", "error"]
     for path in sources:
         cmd.extend(["-i", str(path)])
     parts = []
-    offset = 0.0
-    for index, info in enumerate(probed):
-        parts.append(f"[{index}:v]scale=320:180:force_original_aspect_ratio=decrease,pad=320:180:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=12,setpts=PTS-STARTPTS+{offset}/TB[v{index}]")
-        offset += info["duration"]
+    for index, _info in enumerate(probed):
+        parts.append(f"[{index}:v]scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps},setpts=PTS-STARTPTS[v{index}]")
     joined = "".join(f"[v{index}]" for index in range(len(sources)))
     video = f"{joined}concat=n={len(sources)}:v=1:a=0,format=yuv420p"
     if fade:
@@ -201,14 +205,20 @@ def _stamp(second: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
 
-def passthrough(args: list[str], workdir: Path, timeout: int = 120) -> dict:
+_OUTSIDE = re.compile(r"(^|[=:,;'\"\s])[/~]|\.\.|://|^file:|\\")
+
+
+def passthrough(args: list[str], workdir: Path, timeout: int = 600) -> dict:
+    """Run ffmpeg inside the task's own directory. Paths must stay inside it."""
     from .rules import shell_forbidden
 
     if shell_forbidden(args):
         raise MediaError("参数不能带 shell 符号")
-    result = _run(["ffmpeg", "-y", "-v", "error", *args], timeout=timeout)
+    outside = [arg for arg in args if _OUTSIDE.search(arg)]
+    if outside:
+        raise MediaError(f"参数只能用任务目录里的相对路径：{outside[0]}")
+    result = _run(["ffmpeg", "-y", "-v", "error", *args], timeout=timeout, cwd=workdir)
     return {
         "code": result.returncode,
         "stderr": result.stderr.decode("utf-8", "replace")[-800:],
-        "workdir": str(workdir),
     }

@@ -1,4 +1,4 @@
-"""MiniMax H3 client for the AutoDL ComfyUI workflow minimax_h3_zm_u24.
+"""Standalone MiniMax H3 client for the AutoDL ComfyUI workflow minimax_h3_zm_u24 (manual testing).
 
 Reads AUTODL_API_TOKEN from .env. The token is never printed or written to disk.
 This file only submits, queries, and downloads. It does not build prompts.
@@ -50,20 +50,8 @@ def load_env(path: Path | None = None) -> dict[str, str]:
 
 
 def config() -> dict[str, str]:
-    """Saved video settings override AUTODL_API_* when the server has stored them."""
-    try:
-        from server.providers import resolve
-        import server.app as app_module
-
-        saved = resolve(app_module.store, "video")
-        if saved["source"] == "saved":
-            if not saved["key"]:
-                raise H3Error("AUTODL_API_TOKEN is missing")
-            return {"token": saved["key"], "base": saved["base"].rstrip("/"), "workflow": saved["workflow"]}
-    except H3Error:
-        raise
-    except Exception:
-        pass
+    """Standalone tool: credentials come from the environment or .env. The service uses
+    server/providers/autodl.py with the provider instance stored in the database instead."""
     file_env = load_env()
     token = os.environ.get("AUTODL_API_TOKEN") or file_env.get("AUTODL_API_TOKEN")
     if not token:

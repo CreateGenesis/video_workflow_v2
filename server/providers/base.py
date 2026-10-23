@@ -82,6 +82,10 @@ class ProviderError(RuntimeError):
     """The provider answered and said no (bad request, failed job, content rejected)."""
 
 
+class InputError(ProviderError):
+    """Our own request is wrong (missing file, compose warning, bad template). Retrying cannot help."""
+
+
 class TransientError(RuntimeError):
     """Network blip or 5xx while polling. The engine retries the same step later; state is unchanged."""
 

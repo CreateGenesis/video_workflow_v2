@@ -11,3 +11,4 @@ tools/wheels/
 cvgen-cli/target/
 .venv/
 .cvgen/
+.claude/
