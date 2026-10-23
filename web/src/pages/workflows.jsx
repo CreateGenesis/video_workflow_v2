@@ -8,7 +8,7 @@ import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, Dia
 import { Input, Textarea } from "@/components/ui/input";
 import { Field } from "@/components/ui/label";
 import { toast } from "@/components/ui/toast";
-import { EmptyState, InlineError, Money, PageHeader, QueryView, SkeletonCards, Time, VersionStatus, useConfirm, useDocumentTitle } from "@/components/common";
+import { EmptyState, InlineError, Money, PageHeader, PageLoading, QueryView, Time, VersionStatus, useConfirm, useDocumentTitle } from "@/components/common";
 import { api, qs } from "@/lib/api";
 import { useSession } from "@/lib/session";
 
@@ -36,7 +36,7 @@ export default function WorkflowsPage() {
     <div>
       <PageHeader title="工作流" description="定型后的出片流程。agent 写草稿并试跑，审计员审过后发布；运行总是钉死某个已发布版本。" actions={actions} />
       {importing ? <ImportDialog workspaceId={workspaceId} onClose={() => setImporting(false)} /> : null}
-      <QueryView query={list} skeleton={<SkeletonCards count={4} className="xl:grid-cols-2" />}>
+      <QueryView query={list} skeleton={<PageLoading label="正在加载工作流" />}>
         {(data) =>
           data.items.length ? (
             <div className="grid gap-3 xl:grid-cols-2">

@@ -34,7 +34,7 @@ export function Badge({ className, tone = "gray", dot = false, pulse = false, ch
     >
       {dot ? (
         <span className="relative flex size-1.5">
-          {pulse ? <span className={cn("absolute inline-flex size-full animate-pulse rounded-full opacity-50 motion-reduce:animate-none", DOTS[tone])} /> : null}
+          {pulse ? <span className={cn("absolute inline-flex size-full rounded-full opacity-40", DOTS[tone])} /> : null}
           <span className={cn("relative inline-flex size-1.5 rounded-full", DOTS[tone] || DOTS.gray)} />
         </span>
       ) : null}

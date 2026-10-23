@@ -171,24 +171,25 @@ export function Notice({ tone = "info", children, className, icon: Icon }) {
   );
 }
 
-export function SkeletonRows({ rows = 4, className }) {
+/** One still block. Several pulsing bars strobe while a list is loading. */
+export function PageLoading({ label = "正在加载", className }) {
   return (
-    <div className={cn("space-y-2", className)}>
-      {Array.from({ length: rows }, (_, index) => (
-        <Skeleton key={index} className="h-12 w-full" />
-      ))}
+    <div className={cn("page-loading", className)} role="status" aria-live="polite">
+      <span className="text-[13px] text-[#8a8a8a]">{label}</span>
     </div>
   );
 }
 
+export function Reveal({ children, className }) {
+  return <div className={cn("page-reveal", className)}>{children}</div>;
+}
+
+export function SkeletonRows({ rows = 4, className }) {
+  return <PageLoading className={className} />;
+}
+
 export function SkeletonCards({ count = 3, className }) {
-  return (
-    <div className={cn("grid gap-3 sm:grid-cols-2 xl:grid-cols-3", className)}>
-      {Array.from({ length: count }, (_, index) => (
-        <Skeleton key={index} className="h-32 w-full rounded-lg" />
-      ))}
-    </div>
-  );
+  return <PageLoading className={className} />;
 }
 
 /** First load → skeleton, error with nothing to show → ErrorState, else children(data).
@@ -196,8 +197,8 @@ export function SkeletonCards({ count = 3, className }) {
 export function QueryView({ query, skeleton, children }) {
   const shown = query.data;
   if (query.isError && !shown) return <ErrorState error={query.error} retry={() => query.refetch()} />;
-  if (!shown) return skeleton ?? <SkeletonRows />;
-  return children(shown);
+  if (!shown) return skeleton ?? <PageLoading />;
+  return <Reveal>{children(shown)}</Reveal>;
 }
 
 /* ---------- confirm ---------- */
