@@ -47,17 +47,17 @@ def execute(task: dict, worker_id: str) -> str:
             raise InputError(f"不认识的任务类型 {task['kind']}")
         return "succeeded"
     except Canceled:
-        with db.tx() as conn:
+        with db.tx(lock_run=task.get("run_id")) as conn:
             task_q.mark_canceled(conn, task["id"])
             _after(conn, task, principal)
         return "canceled"
     except Park as exc:
-        with db.tx() as conn:
+        with db.tx(lock_run=task.get("run_id")) as conn:
             task_q.park(conn, task["id"], str(exc))
             _after(conn, task, principal)
         return "needs_attention"
     except SubmissionUnknown as exc:
-        with db.tx() as conn:
+        with db.tx(lock_run=task.get("run_id")) as conn:
             if task["retry_safe"]:
                 outcome = task_q.fail(conn, task["id"], {"message": str(exc), "kind": "submission_unknown"}, retry=True)
             else:
@@ -67,12 +67,12 @@ def execute(task: dict, worker_id: str) -> str:
         return outcome
     except (InputError, GraphError, NotFound, TemplateError, RunError, KeyError, LookupError) as exc:
         message = str(exc) if not isinstance(exc, KeyError) else f"缺少字段 {exc}"
-        with db.tx() as conn:
+        with db.tx(lock_run=task.get("run_id")) as conn:
             outcome = task_q.fail(conn, task["id"], {"message": message, "kind": "input"}, retry=False)
             _after(conn, task, principal)
         return outcome
     except (ProviderError, TransientError) as exc:
-        with db.tx() as conn:
+        with db.tx(lock_run=task.get("run_id")) as conn:
             if isinstance(exc, TransientError) and not task["retry_safe"]:
                 task_q.park(conn, task["id"], f"{exc}。按次计费的供应商不自动重试，请核对后处理。")
                 outcome = "needs_attention"
@@ -81,14 +81,14 @@ def execute(task: dict, worker_id: str) -> str:
             _after(conn, task, principal)
         return outcome
     except MediaError as exc:
-        with db.tx() as conn:
+        with db.tx(lock_run=task.get("run_id")) as conn:
             outcome = task_q.fail(conn, task["id"], {"message": str(exc), "kind": "media"}, retry=True)
             _after(conn, task, principal)
         return outcome
     except Exception as exc:  # a bug: record it on the task so it is visible, do not retry blindly
         log.exception("task %s crashed", task["id"])
         detail = "".join(traceback.format_exception_only(type(exc), exc)).strip()
-        with db.tx() as conn:
+        with db.tx(lock_run=task.get("run_id")) as conn:
             outcome = task_q.fail(conn, task["id"], {"message": f"内部错误：{detail}", "kind": "internal",
                                                      "trace": traceback.format_exc()[-2000:]}, retry=False)
             _after(conn, task, principal)

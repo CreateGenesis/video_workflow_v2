@@ -489,9 +489,15 @@ def reset_engine() -> None:
 
 
 @contextmanager
-def tx() -> Iterator[Connection]:
-    """One transaction. Commit on success, roll back on any exception."""
+def tx(lock_run: str | None = None) -> Iterator[Connection]:
+    """One transaction. Commit on success, roll back on any exception.
+
+    lock_run: take the run's row lock first. Every transaction that finishes tasks of a run and then
+    advances it uses this, so they all lock in the same order (run, then tasks) and cannot deadlock.
+    """
     with get_engine().begin() as conn:
+        if lock_run:
+            conn.execute(text("SELECT id FROM runs WHERE id = :id FOR UPDATE"), {"id": lock_run})
         yield conn
 
 

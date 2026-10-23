@@ -64,7 +64,7 @@ def run_llm(job: Job) -> None:
     from .runner import record_cost, task_finished
 
     node = job.node
-    with db.tx() as conn:
+    with db.tx(lock_run=job.task.get("run_id")) as conn:
         instance, adapter = job.adapter(conn)
         scope = job.scope(conn)
         schema = scope.schema(node["output_schema"])
@@ -80,7 +80,7 @@ def run_llm(job: Job) -> None:
     transcript = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     usage: list[Usage] = []
     value, problems, attempts, model = None, [], 0, instance.model
-    with db.tx() as conn:
+    with db.tx(lock_run=job.task.get("run_id")) as conn:
         cached = conn.execute(select(db.llm_cache.c.response).where(db.llm_cache.c.key == key)).scalar() if use_cache else None
         if cached:
             value = cached["json"]
@@ -94,7 +94,7 @@ def run_llm(job: Job) -> None:
             value = outcome.data["json"]
             model = outcome.data.get("model") or model
             transcript.append({"role": "assistant", "content": outcome.data.get("raw", "")})
-            with db.tx() as conn:
+            with db.tx(lock_run=job.task.get("run_id")) as conn:
                 problems = _check(conn, job, job.scope(conn), node, value)
             if not problems or attempts == limit:
                 break
@@ -104,7 +104,7 @@ def run_llm(job: Job) -> None:
                 {"role": "user", "content": feedback},
             ]
             transcript.append({"role": "user", "content": feedback})
-    with db.tx() as conn:
+    with db.tx(lock_run=job.task.get("run_id")) as conn:
         cost = record_cost(conn, job.task, instance, usage) if usage else 0
         if problems:
             conn.execute(db.tasks.update().where(db.tasks.c.id == job.id).values(output={
@@ -112,7 +112,7 @@ def run_llm(job: Job) -> None:
             }))
     if problems:
         raise Park(f"修正 {attempts} 次后仍有问题：" + "；".join(problems[:5]))
-    with db.tx() as conn:
+    with db.tx(lock_run=job.task.get("run_id")) as conn:
         created = {}
         if node.get("materialize"):
             created, issues = materialize(node["materialize"], value, DbSink(conn, job.principal, job.task["work_id"],

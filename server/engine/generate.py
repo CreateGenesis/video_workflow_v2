@@ -281,7 +281,7 @@ def run_provider(job: Job) -> None:
                     job.task["submitted_at"] = db.now()
             job.task["provider_ref"] = ref
             outcome = _poll(job, adapter, ref)
-    with db.tx() as conn:
+    with db.tx(lock_run=job.task.get("run_id")) as conn:
         output = STORE[job.task["kind"]](conn, job, outcome, meta)
         cost = record_cost(conn, job.task, instance, outcome.usage)
         output["cost_yuan"] = float(cost)

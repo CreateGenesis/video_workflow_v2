@@ -422,7 +422,10 @@ def decide_gate(conn: Connection, principal, task_id: str, decision: str, *, not
         raise RunError("这个闸门现在不需要审批")
     node = task["input"]["node"]
     principal.require(f"gates:decide:{node.get('approvers', 'reviewer')}")
-    run = get_run(conn, task["run_id"])
+    run = get_run(conn, task["run_id"], lock=True)
+    task = task_q.get(conn, task_id)
+    if task["status"] != "waiting":
+        raise RunError("这个闸门现在不需要审批")
     if decision == "approve":
         applied = _apply_selections(conn, principal, run, node, selections or {})
         task_q.complete(conn, task_id, {"decision": "approved", "by": principal.name, "note": note, "selections": applied})

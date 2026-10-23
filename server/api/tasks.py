@@ -54,16 +54,20 @@ def get_task(task_id: str, principal: Principal = Depends(need("queue:read"))) -
         return data
 
 
+def _snapshot(task_id: str, principal: Principal) -> tuple[dict, int | None]:
+    with db.tx() as conn:
+        task = _task(conn, task_id, principal)
+        return task, task_q.queue_position(conn, task)
+
+
 @router.get("/tasks/{task_id}/wait")
 async def wait_task(task_id: str, timeout: int = 55, principal: Principal = Depends(need("queue:read"))) -> dict:
     """Long poll: returns as soon as the task ends or needs a person, or after `timeout` seconds."""
     deadline = asyncio.get_running_loop().time() + max(1, min(timeout, 120))
     while True:
-        with db.tx() as conn:
-            task = _task(conn, task_id, principal)
-            if task["status"] in task_q.TERMINAL or task["status"] in {"needs_attention", "waiting"}:
-                return {**task_public(task), "done": task["status"] in task_q.TERMINAL}
-            position = task_q.queue_position(conn, task)
+        task, position = await asyncio.to_thread(_snapshot, task_id, principal)
+        if task["status"] in task_q.TERMINAL or task["status"] in {"needs_attention", "waiting"}:
+            return {**task_public(task), "done": task["status"] in task_q.TERMINAL}
         if asyncio.get_running_loop().time() >= deadline:
             return {**task_public(task), "done": False, "queue_position": position}
         await asyncio.sleep(1.0)
@@ -76,6 +80,8 @@ def cancel_task(task_id: str, principal: Principal = Depends(need("queue:read"))
         own = task["created_by_kind"] == principal.kind and task["created_by_id"] == principal.id
         if not own and not principal.can("queue:manage") and not principal.can("works:write"):
             raise HTTPException(status_code=403, detail="只能取消自己发起的任务")
+        if task.get("run_id"):
+            conn.execute(select(db.runs.c.id).where(db.runs.c.id == task["run_id"]).with_for_update())
         task = task_q.request_cancel(conn, principal, task_id)
         if task.get("run_id"):
             from ..workflows.runner import advance
@@ -92,7 +98,9 @@ def resolve_task(task_id: str, body: ResolveIn, principal: Principal = Depends(n
         raise HTTPException(status_code=400, detail="动作只能是 approve、requery、fail、resubmit、attach")
     principal.require(needed)
     with db.tx() as conn:
-        _task(conn, task_id, principal)
+        current = _task(conn, task_id, principal)
+        if current.get("run_id"):
+            conn.execute(select(db.runs.c.id).where(db.runs.c.id == current["run_id"]).with_for_update())
         try:
             task = task_q.resolve_attention(conn, principal, task_id, body.action, body.artifact_id)
         except ValueError as exc:

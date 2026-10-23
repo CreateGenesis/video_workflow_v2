@@ -40,7 +40,7 @@ def _entity(conn, entity_id: str) -> dict:
 def run_check(job: Job) -> None:
     from ..workflows.runner import handle_check
 
-    with db.tx() as conn:
+    with db.tx(lock_run=job.task.get("run_id")) as conn:
         if job.is_workflow:
             upstream_node = job.node["for_each"].split(".", 1)[0]
             upstream = job.upstream_output(conn, upstream_node)
@@ -76,7 +76,7 @@ def run_check(job: Job) -> None:
                                 + str(shot["data"].get("action", "")))
         if spoken and not info.get("has_audio"):
             problems.append("镜头里有台词，但成片没有声音")
-    with db.tx() as conn:
+    with db.tx(lock_run=job.task.get("run_id")) as conn:
         if "contact_sheet" in rules:
             sheet = job.workdir / "sheet.jpg"
             contact_sheet(local, sheet)
@@ -140,7 +140,7 @@ def _audio_file(conn, job: Job, values: list):
 
 
 def run_edit(job: Job) -> None:
-    with db.tx() as conn:
+    with db.tx(lock_run=job.task.get("run_id")) as conn:
         if job.is_workflow:
             ops = job.node["ops"]
             clip_ids = _path_values(conn, job, job.node["clips"]) if job.node.get("clips") else []
@@ -208,7 +208,7 @@ def run_edit(job: Job) -> None:
             current = step
     final = job.workdir / f"{re.sub(r'[^0-9A-Za-z_-]+', '-', name).strip('-') or 'final'}.mp4"
     shutil.copyfile(current, final)
-    with db.tx() as conn:
+    with db.tx(lock_run=job.task.get("run_id")) as conn:
         artifact = job.store(conn, final, kind="video", label=name)
         clip = graph.add_entity(conn, job.principal, job.task["work_id"], "Clip", {
             "title": name, "duration": artifact["duration"],
@@ -243,7 +243,7 @@ def run_pull(job: Job) -> None:
     named = dest.with_suffix(suffix) if suffix else dest
     dest.rename(named)
     title = job.input.get("title") or url.rsplit("/", 1)[-1][:60] or url[:60]
-    with db.tx() as conn:
+    with db.tx(lock_run=job.task.get("run_id")) as conn:
         artifact = job.store(conn, named, mime=mime, label=title, source_url=url)
         entity = None
         if artifact["kind"] in {"image", "video", "audio"}:
@@ -262,7 +262,7 @@ def run_pull(job: Job) -> None:
 
 def run_inspect(job: Job) -> None:
     mode = job.input.get("mode") or "inspect"
-    with db.tx() as conn:
+    with db.tx(lock_run=job.task.get("run_id")) as conn:
         entity = _entity(conn, job.input["entity_id"])
         local = job.local(conn, entity["artifact_id"])
     info = probe(local)
@@ -270,7 +270,7 @@ def run_inspect(job: Job) -> None:
     is_video = bool(info.get("width")) and float(info.get("duration") or 0) > 0.5
     if info.get("has_audio"):
         output["loudness"] = loudness(local)
-    with db.tx() as conn:
+    with db.tx(lock_run=job.task.get("run_id")) as conn:
         if is_video:
             sheet = job.workdir / "sheet.jpg"
             contact_sheet(local, sheet)
@@ -299,14 +299,14 @@ def run_frame(job: Job) -> None:
     if role not in {"首帧", "尾帧", "空间"}:
         raise InputError("抽帧用途只能是首帧、尾帧或空间")
     at = job.input.get("at") or "last"
-    with db.tx() as conn:
+    with db.tx(lock_run=job.task.get("run_id")) as conn:
         clip = _entity(conn, job.input["clip_id"])
         local = job.local(conn, clip["artifact_id"])
     info = probe(local)
     second = 0.0 if at == "first" else (max(0.0, float(info.get("duration") or 0) - 0.1) if at == "last" else float(at))
     dest = job.workdir / "frame.jpg"
     frame_at(local, dest, second)
-    with db.tx() as conn:
+    with db.tx(lock_run=job.task.get("run_id")) as conn:
         artifact = job.store(conn, dest, kind="frame", label=f"{clip['data'].get('title')} {at}")
         reference = graph.add_entity(conn, job.principal, job.task["work_id"], "Reference", {
             "title": "上一镜尾帧" if at == "last" else f"成片 {at} 帧", "role": role,
@@ -317,7 +317,7 @@ def run_frame(job: Job) -> None:
 
 
 def run_ffmpeg(job: Job) -> None:
-    with db.tx() as conn:
+    with db.tx(lock_run=job.task.get("run_id")) as conn:
         if not get_setting(conn, "ffmpeg_passthrough", False):
             raise InputError("ffmpeg 透传没有打开（管理员在设置里打开）")
         for name, artifact_id in (job.input.get("inputs") or {}).items():
@@ -325,7 +325,7 @@ def run_ffmpeg(job: Job) -> None:
                 raise InputError(f"输入文件名不合法：{name}")
             shutil.copyfile(job.local(conn, artifact_id), job.workdir / name)
     result = passthrough(list(job.input.get("args") or []), job.workdir)
-    with db.tx() as conn:
+    with db.tx(lock_run=job.task.get("run_id")) as conn:
         stored = {}
         for name in job.input.get("outputs") or []:
             path = (job.workdir / name).resolve()

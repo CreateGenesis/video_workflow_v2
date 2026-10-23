@@ -204,3 +204,39 @@ def test_queue_order_follows_runs(admin, fresh, mock_providers):
         started = {row.run_id: row.started_at for row in conn.execute(
             select(db.tasks.c.run_id, db.tasks.c.started_at).where(db.tasks.c.kind == "video"))}
     assert started[first["id"]] < started[second["id"]]
+
+
+def test_parallel_workers_finish_runs_without_internal_errors(admin, fresh, mock_providers):
+    """Several workers finishing tasks of the same runs at once: no deadlock, nothing double-run."""
+    import threading
+
+    from server.engine.worker import Worker
+    from server.samples import ZERO_FIXTURE, seed_samples
+    from tests.v2.test_workflow_runs import _upload
+
+    seeded = seed_samples(fresh["workspace_id"])
+    zero = seeded["workflows"]["zero-snow"]["workflow_id"]
+    product = seeded["workflows"]["product-ad"]["workflow_id"]
+    for workflow_id in (zero, product):
+        admin.post(f"/api/workflows/{workflow_id}/versions/1/publish")
+    with db.tx() as conn:
+        conn.execute(update(db.provider_instances).where(db.provider_instances.c.name == "llm.default")
+                     .values(options={"replies": {"adapt": ZERO_FIXTURE}}))
+        instances.set_pool(conn, SYSTEM, "gpu", concurrency=2)
+    image = _upload(admin, fresh["workspace_id"])
+    runs = [admin.post("/api/runs", {"workflow_id": zero, "inputs": {"passage": str(index)}})["id"] for index in range(2)]
+    runs += [admin.post("/api/runs", {"workflow_id": product, "auto_gates": True, "inputs": {
+        "product": "杯", "facts": ["保温"], "inspiration": "冬", "product_images": [image]}})["id"] for _ in range(2)]
+    threads = [threading.Thread(target=Worker(f"w{index}").run_until_idle) for index in range(3)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=300)
+    run_worker()
+    with db.tx() as conn:
+        statuses = {row.id: row.status for row in conn.execute(select(db.runs.c.id, db.runs.c.status))}
+        errors = [row.error for row in conn.execute(select(db.tasks.c.error)) if row.error]
+        attempts = [row.attempts for row in conn.execute(select(db.tasks.c.attempts).where(db.tasks.c.kind == "video"))]
+    assert set(statuses.values()) == {"succeeded"}, statuses
+    assert errors == []
+    assert set(attempts) == {1}
