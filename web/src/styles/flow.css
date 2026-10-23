@@ -50,3 +50,51 @@
 }
 .react-flow__minimap-mask { fill: rgba(23, 23, 24, 0.72) !important; }
 .react-flow__minimap-node { fill: #353535 !important; stroke: #4e4e4e !important; }
+
+/* Workflow step cards: one line of title, one line of what the step does. */
+.step-node {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px 0 10px;
+  border-radius: 8px;
+  border: 1px solid #4e4e4e;
+  border-left: 3px solid var(--slot, #b39ddb);
+  background: #2a2a2b;
+  box-shadow: 0 1px 6px rgb(0 0 0 / 0.35);
+  cursor: pointer;
+  transition: opacity 120ms, border-color 120ms, background 120ms;
+}
+.step-node:hover { background: #313133; border-color: #6a6a6a; border-left-color: var(--slot, #b39ddb); }
+.step-node.active { border-color: #0b8ce9; border-left-color: var(--slot, #b39ddb); background: #2f3540; box-shadow: 0 0 0 1px #0b8ce9; }
+.step-node.dim { opacity: 0.45; }
+.step-node-index {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #1c1c1d;
+  font-size: 11px;
+  color: #bbb;
+}
+.step-node-status { width: 8px; height: 8px; flex-shrink: 0; border-radius: 999px; }
+.step-node .react-flow__handle,
+.entity-node .react-flow__handle { width: 6px; height: 6px; opacity: 0; border: 0; }
+
+/* Relation graph cards. */
+.entity-node {
+  overflow: hidden;
+  border-radius: 8px;
+  border: 1px solid #4e4e4e;
+  border-top: 3px solid var(--slot, #b39ddb);
+  background: #2a2a2b;
+  box-shadow: 0 1px 6px rgb(0 0 0 / 0.35);
+  transition: opacity 120ms, border-color 120ms;
+}
+.entity-node:hover { border-color: #6a6a6a; border-top-color: var(--slot, #b39ddb); }
+.entity-node.active { border-color: #0b8ce9; border-top-color: var(--slot, #b39ddb); box-shadow: 0 0 0 1px #0b8ce9; }
+.entity-node.dim { opacity: 0.3; }
+.react-flow__edge.dim { opacity: 0.15; }

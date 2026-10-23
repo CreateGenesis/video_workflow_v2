@@ -26,7 +26,7 @@ import {
   useDocumentTitle,
 } from "@/components/common";
 import { CompileResult } from "@/components/compile-result";
-import { StepGraph } from "@/components/step-graph";
+import { KindIcon, StepGraph } from "@/components/step-graph";
 import { slotColor } from "@/lib/comfy";
 import { SchemaForm, initialValues, toInputs, validate } from "@/components/schema-form";
 import { api } from "@/lib/api";
@@ -93,7 +93,7 @@ export default function WorkflowVersionPage() {
             <TabsTrigger value="overview">概览与步骤</TabsTrigger>
             <TabsTrigger value="spec">规格 JSON</TabsTrigger>
             <TabsTrigger value="diff">与上一版的差异</TabsTrigger>
-            <TabsTrigger value="compile">编译试跑</TabsTrigger>
+            <TabsTrigger value="compile">预览提示词</TabsTrigger>
           </TabsList>
           <TabsContent value="overview">
             <Overview data={data} />
@@ -187,23 +187,181 @@ function VersionActions({ id, version, data, name }) {
   );
 }
 
-function nodeSummary(node) {
-  const parts = [];
-  if (node.provider) parts.push(`供应商 ${node.provider}`);
-  if (node.for_each) parts.push(`逐条：${node.for_each}`);
-  if (node.candidates) parts.push(`${node.candidates} 张候选`);
-  if (node.select === "gate") parts.push("由闸门挑选");
-  if (node.approvers) parts.push(`审批：${ROLE[node.approvers] || node.approvers}`);
-  if (node.auto_approve) parts.push("自动通过");
-  if (node.show) parts.push(`展示 ${node.show.join("、")}`);
-  if (node.rules) parts.push(`检查 ${node.rules.join("、")}`);
-  if (node.continuity && node.continuity !== "none") parts.push(`连续性 ${node.continuity}`);
-  if (node.repair) parts.push(`修复 ${node.repair} 次`);
-  if (node.retry?.max_attempts) parts.push(`最多尝试 ${node.retry.max_attempts} 次`);
-  return parts;
+
+
+
+const SELECT_LABEL = { first: "取第一张", gate: "交给闸门挑" };
+const ON_FAIL = { fail: "整个运行失败", flag: "标记后继续", rerun_upstream: "重跑对应的上游条目" };
+const ON_TIMEOUT = { wait: "一直等", approve: "自动通过", reject: "自动驳回" };
+
+function Template({ value }) {
+  if (value == null || value === "") return null;
+  return (
+    <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md border border-[#3a3a3a] bg-[#1b1b1c] px-2.5 py-2 font-mono text-xs leading-relaxed text-[#ccc]">
+      {typeof value === "string" ? value : JSON.stringify(value, null, 2)}
+    </pre>
+  );
 }
 
+function editOp(op) {
+  if (op.op === "join") return `拼接${op.fade_seconds ? `，淡入淡出 ${op.fade_seconds} 秒` : ""}`;
+  if (op.op === "mix") return `混音：${[op.music && `配乐 ${op.music}`, op.narration && `旁白 ${op.narration}`].filter(Boolean).join("，") || "—"}${op.duck === false ? "" : "，旁白时压低配乐"}`;
+  if (op.op === "subtitle") return `字幕：${op.lines}${op.burn ? "（烧进画面）" : ""}`;
+  if (op.op === "export") return `导出 ${op.format || "mp4"}${op.resolution ? ` · ${op.resolution}` : ""}${op.name ? ` · ${op.name}` : ""}`;
+  return op.op;
+}
 
+/** Steps as a graph on the left and everything about the selected step on the right. */
+function StepsCard({ spec, order, deps }) {
+  const nodes = spec.nodes || [];
+  const byId = Object.fromEntries(nodes.map((node) => [node.id, node]));
+  const [picked, setPicked] = useState(null);
+  const selected = picked && byId[picked] ? picked : order[0];
+  const node = byId[selected] || {};
+  const titleOf = (id) => byId[id]?.title || id;
+  const downstream = order.filter((id) => (deps[id] || []).includes(selected));
+  const chips = (ids) =>
+    ids.length ? (
+      <span className="flex flex-wrap gap-1">
+        {ids.map((id) => (
+          <button key={id} className="rounded border border-[#4e4e4e] bg-[#222] px-1.5 py-0.5 text-xs hover:border-[#0b8ce9] hover:text-white" onClick={() => setPicked(id)}>
+            {titleOf(id)}
+          </button>
+        ))}
+      </span>
+    ) : (
+      <span className="text-muted-foreground">无</span>
+    );
+  const materialize = Object.entries(node.materialize || {});
+  const aliases = [...new Set([...JSON.stringify(node).matchAll(/\{\{\s*assets\.([a-z][a-z0-9_]*)/g)].map((match) => match[1]))];
+  return (
+    <Card className="overflow-hidden">
+      <CardHeader>
+        <CardTitle>步骤</CardTitle>
+        <span className="text-[13px] text-muted-foreground">{order.length} 步 · 点一个步骤看详情</span>
+      </CardHeader>
+      <div className="grid border-t border-[#4e4e4e] lg:grid-cols-[300px_minmax(0,1fr)]">
+        <div className="border-b border-[#4e4e4e] lg:border-r lg:border-b-0">
+          <StepGraph nodes={nodes} order={order} deps={deps} selected={selected} onSelect={setPicked} />
+        </div>
+        {selected ? (
+          <div className="min-w-0 space-y-4 p-4" data-testid="step-detail">
+            <div className="flex flex-wrap items-center gap-2">
+              <KindIcon kind={node.kind} className="size-5" />
+              <span className="text-base font-semibold">{node.title || selected}</span>
+              <Badge>{kindLabel(node.kind)}</Badge>
+              <code className="text-xs text-muted-foreground">{selected}</code>
+            </div>
+            <KeyValues
+              items={[
+                ["上游", chips(deps[selected] || [])],
+                ["下游", chips(downstream)],
+                node.provider ? ["供应商", <code className="text-[13px]">{node.provider}</code>] : null,
+                node.for_each ? ["逐条", <span>对 <code className="text-[13px]">{node.for_each}</code> 的每一项各跑一次</span>] : null,
+                node.kind === "image" ? ["候选", `${node.candidates || 1} 张，${SELECT_LABEL[node.select || "first"]}`] : null,
+                node.role ? ["参考用途", node.role] : null,
+                node.attach_to ? ["选中的图连到", <code className="text-[13px]">{node.attach_to}</code>] : null,
+                node.references?.length ? ["参考图", node.references.map((ref) => <code key={ref} className="mr-1.5 text-[13px]">{ref}</code>)] : null,
+                node.template ? ["ComfyUI 模板", <code className="text-[13px]">{node.template}</code>] : null,
+                node.resolution ? ["分辨率", node.resolution] : null,
+                node.continuity && node.continuity !== "none" ? ["连续性", "上一镜尾帧接下一镜（镜头串行）"] : null,
+                node.voice ? ["音色", <code className="text-[13px]">{node.voice}</code>] : null,
+                node.duration_seconds ? ["时长", `${node.duration_seconds} 秒`] : null,
+                node.rules ? ["检查", node.rules.join("、")] : null,
+                node.on_fail ? ["不通过时", ON_FAIL[node.on_fail] || node.on_fail] : null,
+                node.max_reruns != null ? ["最多重跑", `${node.max_reruns} 次`] : null,
+                node.kind === "gate" ? ["审批", node.auto_approve ? "自动通过" : `${ROLE[node.approvers || "reviewer"] || node.approvers}审批`] : null,
+                node.show ? ["审批时展示", chips(node.show)] : null,
+                node.kind === "gate" ? ["驳回单条", node.allow_redo === false ? "不允许" : "允许只重跑被驳回的条目"] : null,
+                node.timeout_hours ? ["超时", `${node.timeout_hours} 小时后${ON_TIMEOUT[node.on_timeout || "wait"]}`] : null,
+                node.clips ? ["素材片段", <code className="text-[13px]">{node.clips}</code>] : null,
+                node.repair ? ["自动修复", `最多 ${node.repair} 次`] : null,
+                node.retry?.max_attempts ? ["重试", `最多 ${node.retry.max_attempts} 次${node.retry.backoff_seconds ? `，间隔 ${node.retry.backoff_seconds} 秒` : ""}`] : null,
+                node.timeout_seconds ? ["超时", `${node.timeout_seconds} 秒`] : null,
+                aliases.length
+                  ? [
+                      "用到的素材",
+                      <span className="flex flex-col gap-0.5">
+                        {aliases.map((alias) => (
+                          <span key={alias} className="text-[13px]">
+                            <code className="text-muted-foreground">assets.{alias}</code> = <code>{spec.assets?.[alias] || "未定义"}</code>
+                          </span>
+                        ))}
+                      </span>,
+                    ]
+                  : null,
+              ]}
+            />
+            {node.kind === "llm" ? (
+              <div className="space-y-2">
+                {node.prompt?.system ? (
+                  <div>
+                    <p className="mb-1 text-xs font-medium text-muted-foreground">系统提示</p>
+                    <Template value={node.prompt.system} />
+                  </div>
+                ) : null}
+                <div>
+                  <p className="mb-1 text-xs font-medium text-muted-foreground">用户提示</p>
+                  <Template value={node.prompt?.user} />
+                </div>
+                <div>
+                  <p className="mb-1 text-xs font-medium text-muted-foreground">输出格式</p>
+                  <Template value={node.output_schema} />
+                </div>
+                {materialize.length ? (
+                  <div>
+                    <p className="mb-1 text-xs font-medium text-muted-foreground">写入作品</p>
+                    <ul className="space-y-1 text-[13px]">
+                      {materialize.map(([field, rule]) => (
+                        <li key={field}>
+                          <code>{field}</code> → 每项一个「{rule.type}」
+                          {rule.links?.length ? <span className="text-muted-foreground">，连到 {rule.links.map((link) => link.to).join("、")}</span> : null}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            {node.kind === "video" ? (
+              node.prompt && node.prompt !== "compose" ? (
+                <div>
+                  <p className="mb-1 text-xs font-medium text-muted-foreground">提示词</p>
+                  <Template value={node.prompt} />
+                </div>
+              ) : (
+                <p className="text-[13px] text-muted-foreground">提示词：由镜头、风格、运镜和参考图自动组合成四段式。「预览提示词」里能看到每一镜的最终文字。</p>
+              )
+            ) : null}
+            {["image", "music"].includes(node.kind) ? (
+              <div>
+                <p className="mb-1 text-xs font-medium text-muted-foreground">提示词</p>
+                <Template value={node.prompt} />
+                {node.lyrics ? <Template value={node.lyrics} /> : null}
+              </div>
+            ) : null}
+            {node.kind === "tts" ? (
+              <div>
+                <p className="mb-1 text-xs font-medium text-muted-foreground">台词</p>
+                <Template value={node.text || "{{item.text}}"} />
+              </div>
+            ) : null}
+            {node.kind === "edit" ? (
+              <ol className="list-inside list-decimal space-y-1 text-[13px]">
+                {(node.ops || []).map((op, index) => (
+                  <li key={index}>{editOp(op)}</li>
+                ))}
+              </ol>
+            ) : null}
+            <Collapsible title="这一步的原始 JSON">
+              <JsonView value={node} maxHeight="20rem" />
+            </Collapsible>
+          </div>
+        ) : null}
+      </div>
+    </Card>
+  );
+}
 
 const GENERATION_KINDS = ["llm", "image", "video", "tts", "music"];
 
@@ -304,7 +462,6 @@ function ProviderBindings({ data }) {
 
 function Overview({ data }) {
   const spec = data.spec || {};
-  const nodes = Object.fromEntries((spec.nodes || []).map((node) => [node.id, node]));
   const order = data.graph?.order || [];
   const deps = data.graph?.deps || {};
   const validation = data.validation || { errors: [], warnings: [] };
@@ -342,49 +499,8 @@ function Overview({ data }) {
             </ul>
           </div>
         ) : null}
+        <StepsCard spec={spec} order={order} deps={deps} />
         <ProviderBindings data={data} />
-        <Card className="overflow-hidden">
-          <CardHeader>
-            <CardTitle>步骤图</CardTitle>
-            <span className="tnum text-[13px] text-muted-foreground">{order.length} 步</span>
-          </CardHeader>
-          <StepGraph
-            nodes={spec.nodes || []}
-            order={order}
-            deps={deps}
-            summaries={Object.fromEntries(order.map((nodeId) => [nodeId, nodeSummary(nodes[nodeId] || {}).join(" · ")]))}
-          />
-          <ol className="relative border-t border-[#4e4e4e]">
-            {order.map((nodeId, index) => {
-              const node = nodes[nodeId] || {};
-              const summary = nodeSummary(node);
-              const color = slotColor(node.kind);
-              return (
-                <li key={nodeId} className="relative flex gap-3 px-4 py-3">
-                  <div className="flex flex-col items-center">
-                    <span className="tnum flex size-6 items-center justify-center rounded-full border text-xs font-semibold" style={{ borderColor: color, color }}>{index + 1}</span>
-                    {index < order.length - 1 ? <span className="mt-1 w-px flex-1 bg-border" /> : null}
-                  </div>
-                  <div className="min-w-0 flex-1 pb-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="size-2 rounded-full" style={{ background: color }} />
-                      <span className="text-sm font-medium">{node.title || nodeId}</span>
-                      <Badge>{kindLabel(node.kind)}</Badge>
-                      <code className="text-xs text-muted-foreground">{nodeId}</code>
-                    </div>
-                    {deps[nodeId]?.length ? <p className="mt-0.5 text-xs text-muted-foreground">依赖：{deps[nodeId].join("、")}</p> : <p className="mt-0.5 text-xs text-muted-foreground">起点</p>}
-                    {summary.length ? <p className="mt-0.5 text-[13px] text-[#ccc]">{summary.join(" · ")}</p> : null}
-                    {typeof node.prompt === "string" && node.prompt !== "compose" ? (
-                      <p className="mt-1 line-clamp-2 rounded bg-[#222] px-2 py-1 font-mono text-xs text-muted-foreground">{node.prompt}</p>
-                    ) : node.prompt === "compose" ? (
-                      <p className="mt-1 text-xs text-muted-foreground">提示词：由本体组合四段式提示词</p>
-                    ) : null}
-                  </div>
-                </li>
-              );
-            })}
-          </ol>
-        </Card>
       </div>
       <div className="space-y-5">
         <Card>
@@ -433,7 +549,7 @@ function Overview({ data }) {
                 ["整批屏障", spec.policy?.batch_barrier ? "开启" : "关闭"],
                 spec.defaults?.resolution ? ["默认分辨率", spec.defaults.resolution] : null,
                 spec.defaults?.duration ? ["默认时长", `${spec.defaults.duration} 秒`] : null,
-                ["试跑样例", Object.keys(data.fixtures || {}).length ? `${Object.keys(data.fixtures).join("、")}` : "没有（编译试跑会缺少大模型输出）"],
+                ["试跑样例", Object.keys(data.fixtures || {}).length ? `${Object.keys(data.fixtures).join("、")}` : "没有（预览提示词会缺少大模型输出）"],
               ]}
             />
           </CardContent>
@@ -588,7 +704,7 @@ function CompileForm({ id, version, data, canRun }) {
         <CardHeader>
           <div>
             <CardTitle>试跑输入</CardTitle>
-            <p className="text-[13px] text-muted-foreground">编译试跑不调用任何供应商，不花钱。</p>
+            <p className="text-[13px] text-muted-foreground">预览提示词不调用任何供应商，不花钱：用试跑样例代替大模型输出，算出每一条最终提示词和花费估算。</p>
           </div>
           <div className="inline-flex rounded-md border bg-card p-0.5 text-xs">
             {[
@@ -611,7 +727,7 @@ function CompileForm({ id, version, data, canRun }) {
         <CardContent className="space-y-4">
           {hasLlm && !hasFixtures ? (
             <Notice tone="warn" icon={AlertTriangle}>
-              这个版本没有试跑样例（fixtures），编译试跑拿不到大模型步骤的输出。
+              这个版本没有试跑样例（fixtures），预览提示词拿不到大模型步骤的输出。
             </Notice>
           ) : null}
           {mode === "form" ? (
@@ -626,7 +742,7 @@ function CompileForm({ id, version, data, canRun }) {
           <div className="flex flex-wrap gap-2">
             <Button onClick={() => check() && compile.mutate(inputs)} loading={compile.isPending}>
               <FlaskConical />
-              编译试跑
+              预览提示词
             </Button>
             {hasLlm && canRun ? (
               <Button
@@ -659,7 +775,7 @@ function CompileForm({ id, version, data, canRun }) {
             </CardContent>
           </Card>
         ) : (
-          <EmptyState icon={FlaskConical} title="还没有试跑结果" description="填好左侧输入后点「编译试跑」，这里会列出每一条最终提示词和逐项花费估算。" />
+          <EmptyState icon={FlaskConical} title="还没有试跑结果" description="填好左侧输入后点「预览提示词」，这里会列出每一条最终提示词和逐项花费估算。" />
         )}
       </div>
     </div>

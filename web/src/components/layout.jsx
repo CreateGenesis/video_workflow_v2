@@ -36,11 +36,14 @@ import { cn } from "@/lib/utils";
 
 const NAV = [
   { to: "/", label: "工作台", icon: LayoutDashboard, end: true },
-  { to: "/runs", label: "运行", icon: Clapperboard, perm: "runs:read" },
-  { to: "/workflows", label: "工作流", icon: Workflow, perm: "workflows:read" },
-  { to: "/explore", label: "探索审计", icon: Telescope, perm: "works:read" },
-  { to: "/queue", label: "队列", icon: ListOrdered, perm: "queue:read", badge: "attention" },
-  { to: "/library", label: "素材库", icon: Boxes, perm: "assets:read" },
+  { group: "agent 探索" },
+  { to: "/explore", label: "探索审计", icon: Telescope, perm: "works:read", hint: "看 agent 在做什么、留意见" },
+  { to: "/library", label: "素材库", icon: Boxes, perm: "assets:read", hint: "定型的风格、角色、参考图、模板" },
+  { group: "生产" },
+  { to: "/workflows", label: "工作流", icon: Workflow, perm: "workflows:read", hint: "agent 定型的出片流程，审过后发布" },
+  { to: "/runs", label: "运行", icon: Clapperboard, perm: "runs:read", hint: "用已发布的工作流出片" },
+  { to: "/queue", label: "队列", icon: ListOrdered, perm: "queue:read", badge: "attention", hint: "排队、GPU 占用、等人处理的任务" },
+  { group: "" },
   { to: "/settings", label: "设置", icon: Settings },
 ];
 
@@ -58,7 +61,17 @@ function NavItems({ collapsed, onNavigate, attention }) {
   const { can } = useSession();
   return (
     <nav className="flex flex-col gap-0.5">
-      {NAV.filter((item) => !item.perm || can(item.perm)).map((item) => {
+      {NAV.filter((item) => !item.perm || can(item.perm)).map((item, index) => {
+        if ("group" in item) {
+          if (collapsed) return <div key={`g${index}`} className="mx-2 my-1.5 border-t border-[#303030]" />;
+          return item.group ? (
+            <div key={`g${index}`} className="px-2.5 pt-3 pb-1 text-[11px] font-medium text-[#777]">
+              {item.group}
+            </div>
+          ) : (
+            <div key={`g${index}`} className="mx-2 my-2 border-t border-[#303030]" />
+          );
+        }
         const Icon = item.icon;
         const count = item.badge === "attention" ? attention : 0;
         const link = (
@@ -66,6 +79,7 @@ function NavItems({ collapsed, onNavigate, attention }) {
             key={item.to}
             to={item.to}
             end={item.end}
+            title={collapsed ? undefined : item.hint}
             onClick={onNavigate}
             className={({ isActive }) =>
               cn(
