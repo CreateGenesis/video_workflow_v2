@@ -1,6 +1,6 @@
-# cvgen v2: PostgreSQL + RustFS + API + worker on one application host.
-# GPU hosts run only ComfyUI and are registered as provider instances in the web console.
-# Copy deploy/.env.example to deploy/.env and fill in every value before `docker compose up -d`.
+# cvgen v3: PostgreSQL, platform-api, and agent-worker.
+# The platform owns every business table and hosts the web console.
+# The agent only claims jobs. It does not start server.app and does not register ComfyUI.
 services:
   postgres:
     image: postgres:18
@@ -16,68 +16,57 @@ services:
       timeout: 3s
       retries: 20
 
-  rustfs:
-    image: rustfs/rustfs:latest
-    environment:
-      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:?set RUSTFS_ACCESS_KEY}
-      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:?set RUSTFS_SECRET_KEY}
-      RUSTFS_ADDRESS: ":9000"
-    volumes:
-      - rustfs:/data
-
-  api:
+  platform-api:
     build:
       context: ..
-      dockerfile: deploy/Dockerfile
+      dockerfile: deploy/Dockerfile.platform
       args:
         APT_MIRROR: ${APT_MIRROR:-}
         PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-pypi.org}
         NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-https://registry.npmjs.org}
-    image: cvgen:v2
-    command: ["api"]
+    image: cvgen-platform:v3
+    command: ["python", "-m", "cvplatform"]
     ports:
-      - "${CVGEN_BIND:-127.0.0.1:8091}:8080"
-    environment: &cvgen-env
-      CVGEN_DATABASE_URL: postgresql+psycopg://cvgen:${POSTGRES_PASSWORD}@postgres:5432/cvgen
-      CVGEN_SECRET_KEY: "${CVGEN_SECRET_KEY:?set CVGEN_SECRET_KEY and keep it stable, it encrypts provider keys}"
-      CVGEN_PUBLIC_BASE: "${CVGEN_PUBLIC_BASE:?set CVGEN_PUBLIC_BASE to the URL people and services use}"
-      CVGEN_S3_ENDPOINT: http://rustfs:9000
-      CVGEN_S3_ACCESS_KEY: ${RUSTFS_ACCESS_KEY}
-      CVGEN_S3_SECRET_KEY: ${RUSTFS_SECRET_KEY}
-      CVGEN_S3_BUCKET: cvgen
-      CVGEN_RELEASES: /releases
-      AUTODL_API_TOKEN: ${AUTODL_API_TOKEN:-}
-      AUTODL_API_BASE: ${AUTODL_API_BASE:-https://www.autodl.art}
-      H3_WORKFLOW_ID: ${H3_WORKFLOW_ID:-minimax_h3_zm_u24}
-      HTTP_PROXY: ${HTTP_PROXY:-}
-      HTTPS_PROXY: ${HTTPS_PROXY:-}
-      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,postgres,rustfs}
-    volumes:
-      - cvgen:/data
-      - ${CVGEN_RELEASES_DIR:-../tools/dist}:/releases:ro
+      - "${CVGEN_BIND:-127.0.0.1:8093}:8093"
+    environment:
+      CVGEN_PLATFORM_PORT: "8093"
+      CVGEN_PLATFORM_HOST: "0.0.0.0"
+      CVGEN_PLATFORM_DATABASE_URL: postgresql+psycopg://cvgen:${POSTGRES_PASSWORD}@postgres:5432/cvgen
+      CVGEN_WEB_DIST: /app/web/dist
     depends_on:
       postgres:
         condition: service_healthy
-      rustfs:
-        condition: service_started
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8093/api/health')"]
       interval: 15s
       timeout: 5s
       retries: 8
 
-  worker:
-    image: cvgen:v2
-    command: ["worker", "--threads", "${CVGEN_WORKER_THREADS:-8}"]
-    environment: *cvgen-env
-    volumes:
-      - cvgen:/data
+  agent-worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.agent
+      args:
+        APT_MIRROR: ${APT_MIRROR:-}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-pypi.org}
+    image: cvgen-agent:v3
+    command: ["python", "-m", "agent"]
+    ports:
+      - "127.0.0.1:8094:8094"
+    environment:
+      CVGEN_AGENT_PORT: "8094"
+      CVGEN_AGENT_HOST: "0.0.0.0"
+      CVGEN_PLATFORM_URL: http://platform-api:8093
     depends_on:
-      api:
+      platform-api:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8094/api/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
 
 volumes:
   postgres:
-  rustfs:
-  cvgen:

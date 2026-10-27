@@ -1,0 +1,43 @@
+# 已退役。这不是默认启动方式。
+# 现行编排是 deploy/docker-compose.yml：PostgreSQL + platform-api + agent-worker。
+# 下面保留 v2 的形状，只作对照。不要再用 docker compose -f 本文件 up。
+# 它会启动 server.app、worker，并登记 RustFS。v3 不跑这些进程，也不登记 ComfyUI。
+#
+# cvgen v2 (retired): PostgreSQL + RustFS + API + worker on one application host.
+# GPU hosts ran only ComfyUI and were registered as provider instances in the web console.
+services:
+  postgres:
+    image: postgres:18
+    profiles: ["retired"]
+    environment:
+      POSTGRES_USER: cvgen
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: cvgen
+    volumes:
+      - postgres:/var/lib/postgresql
+
+  rustfs:
+    image: rustfs/rustfs:latest
+    profiles: ["retired"]
+    environment:
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:?set RUSTFS_ACCESS_KEY}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:?set RUSTFS_SECRET_KEY}
+      RUSTFS_ADDRESS: ":9000"
+    volumes:
+      - rustfs:/data
+
+  api:
+    image: cvgen:v2
+    profiles: ["retired"]
+    command: ["api"]
+    ports:
+      - "${CVGEN_BIND:-127.0.0.1:8091}:8080"
+
+  worker:
+    image: cvgen:v2
+    profiles: ["retired"]
+    command: ["worker"]
+
+volumes:
+  postgres:
+  rustfs:

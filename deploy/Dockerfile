@@ -1,38 +1,7 @@
-FROM node:22-bookworm-slim AS web
-ARG NPM_CONFIG_REGISTRY=https://registry.npmjs.org
-WORKDIR /web
-COPY web/package.json web/package-lock.json ./
-RUN npm ci --registry "$NPM_CONFIG_REGISTRY"
-COPY web/ ./
-RUN npm run build
-
+# 已退役。默认镜像不再从这里构建。
+# 平台镜像：deploy/Dockerfile.platform（复制 cvplatform/ 和网页，不安装 Agno）
+# agent 镜像：deploy/Dockerfile.agent（只复制 agent/，安装 Agno 和 MCP）
+# 两个镜像都不以 server.app 启动，也不登记 ComfyUI。
+# 本文件保留，避免旧脚本静默用回 v2 的 server 镜像。
 FROM python:3.12-slim
-ARG APT_MIRROR=
-RUN if [ -n "$APT_MIRROR" ]; then \
-      sed -i "s|http://deb.debian.org/debian|$APT_MIRROR|g" /etc/apt/sources.list.d/debian.sources; \
-    fi \
-    && apt-get update && apt-get install -y --no-install-recommends ffmpeg fonts-noto-cjk \
-    && rm -rf /var/lib/apt/lists/*
-WORKDIR /app
-COPY requirements.txt .
-ARG PIP_INDEX_URL=https://pypi.org/simple
-ARG PIP_TRUSTED_HOST=pypi.org
-RUN pip install --no-cache-dir -i "$PIP_INDEX_URL" --trusted-host "$PIP_TRUSTED_HOST" -r requirements.txt
-COPY alembic.ini h3_client.py ./
-COPY server server
-COPY ontology ontology
-COPY skills skills
-COPY docs docs
-COPY assets assets
-COPY scripts scripts
-# CLI packages: built by CI (tools/dist). Optional here; can also be mounted and pointed to with CVGEN_RELEASES.
-COPY tools tools
-RUN mkdir -p tools/dist
-COPY --from=web /web/dist web/dist
-COPY deploy/entrypoint.sh /entrypoint.sh
-RUN useradd --create-home --uid 10001 cvgen \
-    && chown -R cvgen /app \
-    && chmod 755 /entrypoint.sh
-ENV PYTHONPATH=/app CVGEN_DATA=/data
-ENTRYPOINT ["/entrypoint.sh"]
-CMD ["api"]
+RUN echo "deploy/Dockerfile 已退役。请构建 deploy/Dockerfile.platform 或 deploy/Dockerfile.agent。" >&2 && exit 1

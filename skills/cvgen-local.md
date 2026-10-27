@@ -9,4 +9,6 @@
 - `cvgen upload <文件> [--label 名称]` 上传，返回文件 id。大文件流式上传，不占内存。
 - 图片作为参考：`cvgen entity add Reference '{"title":"...","role":"身份","take":"...","ignore":"..."}' --artifact <文件id>`
 - 视频或音频作为成片：`cvgen entity add Clip '{"title":"..."}' --artifact <文件id>`
-- `cvgen link references <镜头> <参考>`，或把成片放进 `cvgen edit`
+- 已拒绝，不再执行：`cvgen link references <镜头> <参考>`，或把成片放进 `cvgen edit`
+
+已拒绝：本文件里的 `cvgen entity add`、`cvgen entity add Reference`、`cvgen link references` 以及会新建 Reference 或 references 的旧探索命令不再执行。当前步骤见 `skills/cvgen-index.md`：人物上传、补图、设定精确替换、漫剧缺项。

@@ -7,7 +7,9 @@
 操作：
 
 - 雪原段的地点、纱布、风格、运镜、两张参考已经在素材库：`cvgen asset list` 能看到 `style-snow-film`、`place-siberia-snow`、`detail-gauze-roll`、`camera-one-move`、`ref-zero-space`、`ref-zero-gauze`。
-- 探索时：`cvgen work new 雪原`，`cvgen entity add Shot '{...}'`，再把镜头 `cvgen link` 到这些 `asset:名称@1`。
+- 已拒绝，不再执行：探索时 `cvgen work new 雪原`、`cvgen entity add Shot '{...}'`，再把镜头 `cvgen link` 到这些 `asset:名称@1`。
 - `cvgen shot compose <镜头>` 读四段提示词。确认三拍、纱布特写和“动作从下文重新开始”。
 - 警告为空后再 `cvgen generate <镜头>`，`cvgen job wait <任务>` 等到结束，再读成片和接触表。
 - 定型后的版本是工作流“小说片段-雪原-15秒”：`cvgen workflow dry-run <工作流id> 1 '{"passage":"原文"}'` 不花钱看到完整提示词。
+
+已拒绝：本文件里的 `cvgen entity add`、`cvgen entity add Reference`、`cvgen link references` 以及会新建 Reference 或 references 的旧探索命令不再执行。当前步骤见 `skills/cvgen-index.md`：人物上传、补图、设定精确替换、漫剧缺项。

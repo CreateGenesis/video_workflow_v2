@@ -16,4 +16,6 @@
 
 - 首帧或尾帧参考：`cvgen upload <文件>` 拿到文件 id，再 `cvgen entity add Reference '{"title":"首帧","role":"首帧","take":"构图和主体位置","ignore":"多余文字"}' --artifact <文件id>`。
 - 上一镜已经入库时，`cvgen frame <成片> --at last --role 空间` 抽真实尾帧。
-- `cvgen link references <镜头> <参考>` 后再 `cvgen shot compose <镜头>`。确认对齐句在提示词开头，再 `cvgen generate <镜头>`，`cvgen job wait <任务>` 等到结束。
+- 已拒绝，不再执行：`cvgen link references <镜头> <参考>` 后再 `cvgen shot compose <镜头>`。确认对齐句在提示词开头，再 `cvgen generate <镜头>`，`cvgen job wait <任务>` 等到结束。
+
+已拒绝：本文件里的 `cvgen entity add`、`cvgen entity add Reference`、`cvgen link references` 以及会新建 Reference 或 references 的旧探索命令不再执行。当前步骤见 `skills/cvgen-index.md`：人物上传、补图、设定精确替换、漫剧缺项。

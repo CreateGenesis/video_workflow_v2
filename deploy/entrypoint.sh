@@ -1,15 +1,5 @@
 #!/bin/sh
-# Usage: entrypoint.sh api | worker [worker args...]
-set -e
-mkdir -p "${CVGEN_DATA:-/data}"
-chown cvgen:cvgen "${CVGEN_DATA:-/data}"
-role="${1:-api}"
-[ "$#" -gt 0 ] && shift
-if [ "$role" = "api" ]; then
-  su -s /bin/sh cvgen -c 'python -m server.manage migrate'
-  exec su -s /bin/sh cvgen -c "exec uvicorn server.app:app --host 0.0.0.0 --port 8080 --proxy-headers --forwarded-allow-ips='*'"
-fi
-if [ "$role" = "worker" ]; then
-  exec su -s /bin/sh cvgen -c "exec python -m server.worker $*"
-fi
-exec "$role" "$@"
+# 已退役。v3 镜像直接运行 python -m cvplatform 或 python -m agent。
+# 不再迁移 server，也不再启动 server.app / server.worker。
+echo "deploy/entrypoint.sh 已退役。平台用 python -m cvplatform，agent 用 python -m agent。" >&2
+exit 1

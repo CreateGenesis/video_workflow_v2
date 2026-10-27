@@ -4,16 +4,12 @@ import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { PageHeader, useDocumentTitle } from "@/components/common";
 import { api, qs } from "@/lib/api";
-import { useSession } from "@/lib/session";
-
 export default function ProductsPage() {
-  const { workspaceId } = useSession();
   const [q, setQ] = useState("");
   useDocumentTitle("产物");
   const products = useQuery({
-    queryKey: ["products", workspaceId, q],
-    queryFn: () => api.get(`/api/products${qs({ workspace_id: workspaceId, q })}`),
-    enabled: Boolean(workspaceId),
+    queryKey: ["products", q],
+    queryFn: () => api.get(`/api/products${qs({ q })}`),
   });
   const items = products.data?.items || [];
   return (

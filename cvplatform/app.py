@@ -7,6 +7,8 @@ import uuid
 from typing import Any
 
 from fastapi import FastAPI, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from pydantic import BaseModel, Field
 
@@ -70,6 +72,7 @@ from cvplatform.probes import (
 
 app = FastAPI(title="cvgen-platform", version="3.0.0")
 PROCESS = "platform"
+WEB_DIST = os.environ.get("CVGEN_WEB_DIST", os.path.join(os.path.dirname(__file__), "..", "web", "dist"))
 
 
 class JobIn(BaseModel):
@@ -157,6 +160,59 @@ def _seed() -> None:
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"process": PROCESS, "service": "platform-api"}
+
+
+@app.get("/api/cli")
+def cli_catalog() -> dict[str, Any]:
+    from cvplatform.catalog import catalog
+
+    return catalog()
+
+
+@app.get("/api/auth/status")
+def auth_status() -> dict[str, Any]:
+    return {
+        "signed_in": True,
+        "setup_needed": False,
+        "me": {"name": "平台", "role": "platform", "perms": ["products:read", "settings:read"]},
+    }
+
+
+@app.get("/api/workspaces")
+def workspaces() -> dict[str, Any]:
+    return {"items": [{"id": "ws", "name": "默认工作区"}]}
+
+
+def _mount_web() -> None:
+    dist = os.path.abspath(WEB_DIST)
+    assets = os.path.join(dist, "assets")
+    index = os.path.join(dist, "index.html")
+    if os.path.isdir(assets):
+        app.mount("/assets", StaticFiles(directory=assets), name="web-assets")
+
+    def _index() -> FileResponse:
+        if not os.path.isfile(index):
+            raise HTTPException(status_code=404, detail="网页还没有构建")
+        return FileResponse(index)
+
+    @app.get("/")
+    def web_index() -> FileResponse:
+        return _index()
+
+    @app.get("/products")
+    def web_products() -> FileResponse:
+        return _index()
+
+    @app.get("/settings")
+    def web_settings() -> FileResponse:
+        return _index()
+
+    @app.get("/comic")
+    def web_comic() -> FileResponse:
+        return _index()
+
+
+_mount_web()
 
 
 @app.post("/api/jobs")
@@ -875,7 +931,8 @@ def main() -> None:
     import uvicorn
 
     port = int(os.environ.get("CVGEN_PLATFORM_PORT", "8093"))
-    uvicorn.run("cvplatform.app:app", host="127.0.0.1", port=port, reload=False)
+    host = os.environ.get("CVGEN_PLATFORM_HOST", "127.0.0.1")
+    uvicorn.run("cvplatform.app:app", host=host, port=port, reload=False)
 
 
 if __name__ == "__main__":

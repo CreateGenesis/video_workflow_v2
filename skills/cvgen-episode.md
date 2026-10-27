@@ -8,8 +8,10 @@
 
 操作：
 
-- `cvgen entity add Appearance '{"title":"正面定妆","face":"...","costume":"..."}'`
+- 已拒绝，不再执行：`cvgen entity add Appearance '{"title":"正面定妆","face":"...","costume":"..."}'`
 - `cvgen link has_appearance <主体> <外形>`；定妆确定后 `cvgen asset promote <外形> <素材名>`，后面每一集都连同一个素材版本。
 - `cvgen image <镜头> --role 身份` 补侧面或背面定妆，图片会自动连到镜头。
 - `cvgen storyboard` 看哪些镜头还没有成片或失败了。
 - 对这些镜头逐条 `cvgen generate <镜头>`；要在已成片的镜头上再出一版，加 `--again`（每镜最多两版）。失败的探索任务用 `cvgen job retry <任务>`。
+
+已拒绝：本文件里的 `cvgen entity add`、`cvgen entity add Reference`、`cvgen link references` 以及会新建 Reference 或 references 的旧探索命令不再执行。当前步骤见 `skills/cvgen-index.md`：人物上传、补图、设定精确替换、漫剧缺项。

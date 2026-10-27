@@ -187,7 +187,8 @@ def main() -> None:
     import uvicorn
 
     port = int(os.environ.get("CVGEN_AGENT_PORT", "8094"))
-    uvicorn.run("agent.app:app", host="127.0.0.1", port=port, reload=False)
+    host = os.environ.get("CVGEN_AGENT_HOST", "127.0.0.1")
+    uvicorn.run("agent.app:app", host=host, port=port, reload=False)
 
 
 if __name__ == "__main__":

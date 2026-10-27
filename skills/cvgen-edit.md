@@ -13,3 +13,5 @@
 - 贴字：加 `--subtitle '["台词一","台词二"]'`，只在台词必须留在画面上时使用
 - 导出到档位：加 `--export 768p横`
 - `cvgen job wait <任务>` 等到结束，读成片链接；`cvgen media get <文件id> -o 成片.mp4` 下载
+
+已拒绝：本文件里的 `cvgen entity add`、`cvgen entity add Reference`、`cvgen link references` 以及会新建 Reference 或 references 的旧探索命令不再执行。当前步骤见 `skills/cvgen-index.md`：人物上传、补图、设定精确替换、漫剧缺项。

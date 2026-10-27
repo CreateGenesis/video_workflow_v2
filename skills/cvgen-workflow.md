@@ -40,3 +40,5 @@
 
 - 网页「运行」里填灵感一键出片，也可以批量。
 - 其他服务用 API 密钥调 `POST /v1/runs`（`auto_gates: true` 全程不等人），完成后回调 `callback_url`。
+
+已拒绝：本文件里的 `cvgen entity add`、`cvgen entity add Reference`、`cvgen link references` 以及会新建 Reference 或 references 的旧探索命令不再执行。当前步骤见 `skills/cvgen-index.md`：人物上传、补图、设定精确替换、漫剧缺项。

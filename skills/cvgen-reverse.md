@@ -8,6 +8,8 @@
 
 操作：
 
-- 本机片子：`cvgen upload <文件>`，再 `cvgen entity add Clip '{"title":"参考片"}' --artifact <文件id>`；网上片子：`cvgen pull <地址> --learn`。
+- 本机片子先 `cvgen upload <文件>`。已拒绝，不再执行：`cvgen entity add Clip '{"title":"参考片"}' --artifact <文件id>`，以及 `cvgen pull <地址> --learn`。
 - `cvgen inspect <实体> --mode reverse`，`cvgen job wait <任务>` 读草案、测量和接触表链接（`cvgen media get <文件id> -o 接触表.jpg` 下载来看）。
 - 确认后再按 `cvgen-h3-prompt` 写镜头。
+
+已拒绝：本文件里的 `cvgen entity add`、`cvgen entity add Reference`、`cvgen link references` 以及会新建 Reference 或 references 的旧探索命令不再执行。当前步骤见 `skills/cvgen-index.md`：人物上传、补图、设定精确替换、漫剧缺项。

@@ -49,6 +49,9 @@ fn run(argv: &[String]) -> Result<()> {
         }
         _ => {}
     }
+    if let Some(name) = removed_command(argv) {
+        return Err(Failure::usage(format!("命令已移除：{name}。不得新建 Reference 或 references")));
+    }
     let paths = Paths::discover()?;
     let builtins = local::commands();
     if let Some((command, rest)) = catalog::split_command(&builtins, argv) {
@@ -74,7 +77,32 @@ fn find_remote(catalog: &Catalog, argv: &[String]) -> Option<(Command, Vec<Strin
     catalog::split_command(&remote, argv).map(|(command, rest)| (command.clone(), rest))
 }
 
+fn removed_command(argv: &[String]) -> Option<String> {
+    let words: Vec<&str> = argv
+        .iter()
+        .filter(|token| !is_help(token) && !token.starts_with('-'))
+        .map(String::as_str)
+        .collect();
+    let joined = words.join(" ");
+    if joined == "entity add Reference" || joined.starts_with("entity add Reference ") {
+        return Some("entity add Reference".into());
+    }
+    if joined == "entity add references" || joined.starts_with("entity add references ") {
+        return Some("entity add references".into());
+    }
+    if words.first() == Some(&"entity") && words.get(1) == Some(&"add") {
+        return Some("entity add".into());
+    }
+    if joined == "link references" || joined.starts_with("link references ") {
+        return Some("link references".into());
+    }
+    None
+}
+
 fn not_found(catalog: &Catalog, builtins: &[Command], argv: &[String]) -> Result<()> {
+    if let Some(name) = removed_command(argv) {
+        return Err(Failure::usage(format!("命令已移除：{name}。不得新建 Reference 或 references")));
+    }
     let first = argv.iter().find(|token| !is_help(token)).cloned().unwrap_or_default();
     let local_only: Vec<Command> = catalog.commands.iter().filter(|command| command.local).cloned().collect();
     if let Some((command, _)) = catalog::split_command(&local_only, argv) {
@@ -113,10 +141,25 @@ fn execute(paths: &Paths, api: &Api, command: &Command, tokens: &[String]) -> Re
     let values = args::bind(command, &parsed, &context, &mut local::read_stdin)?;
     let call = args::assemble(command, &values)?;
     let reply = api.call(&call.method, &call.path, call.body.as_ref())?;
+    if command.name == "comic missing" {
+        return print_comic_missing(&reply);
+    }
     reply.print()?;
     if command.name == "work new" && reply.is_json() {
         local::set_current_work(paths, &reply.json()?)?;
     }
+    Ok(())
+}
+
+fn print_comic_missing(reply: &http::Reply) -> Result<()> {
+    let body = reply.json()?;
+    if body.get("local_h3").and_then(serde_json::Value::as_bool).unwrap_or(false) {
+        return Err(Failure::usage("客户端不能在本地拼 H3 请求"));
+    }
+    let stopped = body.get("stopped_at").and_then(serde_json::Value::as_str).unwrap_or("未知");
+    let missing = body.get("missing").cloned().unwrap_or(serde_json::Value::Array(vec![]));
+    println!("停在：{stopped}");
+    println!("缺：{missing}");
     Ok(())
 }
 

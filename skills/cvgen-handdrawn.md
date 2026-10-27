@@ -8,7 +8,9 @@
 
 操作：
 
-- `cvgen entity add Style '{"title":"手绘结合实拍","medium":"实拍空间里的手绘发光层","grade":"蜡笔毛边，同一实体连续变形","ban":"禁止三维玩具感、矢量线和跳吓"}'`
+- 已拒绝，不再执行：`cvgen entity add Style '{"title":"手绘结合实拍","medium":"实拍空间里的手绘发光层","grade":"蜡笔毛边，同一实体连续变形","ban":"禁止三维玩具感、矢量线和跳吓"}'`
 - `cvgen link styled_as <镜头> <风格>`
 - 实拍参考：`cvgen upload <图片>`，再 `cvgen entity add Reference '{"title":"桌面","role":"空间"}' --artifact <文件id>`
 - `cvgen shot compose <镜头>` 确认两层都在风格句里，再 `cvgen generate <镜头>`
+
+已拒绝：本文件里的 `cvgen entity add`、`cvgen entity add Reference`、`cvgen link references` 以及会新建 Reference 或 references 的旧探索命令不再执行。当前步骤见 `skills/cvgen-index.md`：人物上传、补图、设定精确替换、漫剧缺项。

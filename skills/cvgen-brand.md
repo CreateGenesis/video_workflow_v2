@@ -9,7 +9,9 @@
 操作：
 
 - `cvgen upload <产品图>` 后 `cvgen entity add Reference '{"title":"产品正面","role":"身份","take":"产品外形和标识","ignore":"背景"}' --artifact <文件id>`
-- `cvgen entity add Style '{"title":"品牌宣传","medium":"真人电影感","grade":"统一光线和调色","ban":"禁止定格、仿造标识、字幕和水印"}'`
+- 已拒绝，不再执行：`cvgen entity add Style '{"title":"品牌宣传","medium":"真人电影感","grade":"统一光线和调色","ban":"禁止定格、仿造标识、字幕和水印"}'`
 - `cvgen link styled_as <镜头> <风格>`
 - `cvgen shot compose <镜头>` 确认五拍和主动作后再 `cvgen generate <镜头>`
 - `cvgen check <成片>` 确认时长和分辨率，再进入剪辑
+
+已拒绝：本文件里的 `cvgen entity add`、`cvgen entity add Reference`、`cvgen link references` 以及会新建 Reference 或 references 的旧探索命令不再执行。当前步骤见 `skills/cvgen-index.md`：人物上传、补图、设定精确替换、漫剧缺项。

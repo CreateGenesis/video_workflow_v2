@@ -54,3 +54,5 @@
 - 供应商不存在或能力不对：问管理员在「设置 → 供应商」里配，名字要和规格一致。
 - 一个镜头最多一种运镜；时长 1–15 的整数；分辨率只能是 480p横、480p竖、768p横、768p竖、480p(1:1)、768p(1:1)；参考用途只能是 身份、空间、细节、风格、分镜、音色、情感、首帧、尾帧。
 - 输出 schema 的每个字段都要列进 required，可选值用 null。
+
+已拒绝：本文件里的 `cvgen entity add`、`cvgen entity add Reference`、`cvgen link references` 以及会新建 Reference 或 references 的旧探索命令不再执行。当前步骤见 `skills/cvgen-index.md`：人物上传、补图、设定精确替换、漫剧缺项。

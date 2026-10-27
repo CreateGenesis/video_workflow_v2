@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Retired v2 helper. The default stack is deploy/docker-compose.yml (platform-api + agent-worker).
 # Start a throwaway cvgen stack on mock providers: database, admin user, sample workflows, API and worker.
 # Usage: scripts/dev-up.sh <db-name> <port>     Stop with: scripts/dev-down.sh <db-name>
 # Needs: PostgreSQL reachable at $PG_ADMIN_URL (default the local dev server), Python with requirements.

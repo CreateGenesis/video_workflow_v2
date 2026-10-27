@@ -8,8 +8,10 @@
 
 操作：
 
-- `cvgen entity add Shot '{"title":"...","size":"中景","angle":"平视","action":"...","duration":5}'`
+- 已拒绝，不再执行：`cvgen entity add Shot '{"title":"...","size":"中景","angle":"平视","action":"...","duration":5}'`
 - 参考图：`cvgen upload <文件>`，再 `cvgen entity add Reference '{"title":"...","role":"细节","take":"...","ignore":"..."}' --artifact <文件id>`；素材库里的参考直接连 `asset:名称@版本`。
-- `cvgen link references <镜头> <参考或asset:名称@版本>`
+- 已拒绝，不再执行：`cvgen link references <镜头> <参考或asset:名称@版本>`
 - `cvgen shot compose <镜头>`。有警告时先改实体（`cvgen entity set`）；确认警告可以接受再 `cvgen generate <镜头> --force`。
 - `cvgen job wait <任务>` 等到结束，`cvgen job show <任务>` 读成片和接触表链接。
+
+已拒绝：本文件里的 `cvgen entity add`、`cvgen entity add Reference`、`cvgen link references` 以及会新建 Reference 或 references 的旧探索命令不再执行。当前步骤见 `skills/cvgen-index.md`：人物上传、补图、设定精确替换、漫剧缺项。

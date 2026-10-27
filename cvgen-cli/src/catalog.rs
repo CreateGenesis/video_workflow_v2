@@ -278,7 +278,8 @@ pub fn global_help(commands: &[Command], note: Option<&str>, config_dir: &str) -
     out.push_str("      选项可以写在任何位置；`--` 之后的内容全部当作参数原样传递；\n");
     out.push_str("      任何命令后加 -h 或 --help 只看说明，不执行。\n");
     out.push_str("      JSON 参数可以直接写、写 @文件路径，或写 - 从标准输入读。\n\n");
-    out.push_str("开始：cvgen login --base 服务地址 → cvgen workspace use <工作区id> → cvgen work new <名称>（或 cvgen work use <作品id>）\n\n");
+    out.push_str("开始：cvgen login --base 平台地址。人物用 cvgen character add，缺项用 cvgen comic missing。\n");
+    out.push_str("已拒绝：entity add、entity add Reference、link references。这些命令会新建 Reference，不再执行。\n\n");
     out.push_str("命令：\n");
     let mut groups: Vec<&str> = Vec::new();
     for command in commands {

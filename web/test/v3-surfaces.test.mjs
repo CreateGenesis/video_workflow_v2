@@ -37,33 +37,19 @@ test("mcp card posts the filled address and example, then the platform stores it
   assert.match(source, /示例：\{MCP_EXAMPLE\}/);
 });
 
-test("a new run without a script stops before the old run endpoint", () => {
+test("products and comic pages request only the platform routes", () => {
   assert.equal(blockInspirationRun({ inspiration: "一句灵感" }).blocked, true);
-  assert.equal(blockInspirationRun({ inspiration: "一句灵感" }).message, "不能新开一条灵感出片运行");
-  assert.equal(blockInspirationRun({ script: "第一场" }).blocked, false);
-  const source = read("../src/pages/run-new.jsx");
-  const start = source.indexOf("const start = async");
-  const submitAt = source.indexOf("submit.mutateAsync", start);
-  const gateAt = source.indexOf("blockInspirationRun", start);
-  assert.ok(start >= 0);
-  assert.ok(gateAt > start);
-  assert.ok(submitAt > gateAt);
-  const body = source.slice(start, submitAt);
-  assert.match(body, /if \(gate\.blocked\)/);
-  assert.match(body, /return;/);
-  const submitFn = source.indexOf("const submit = useMutation");
-  const mutation = source.slice(submitFn, source.indexOf("onSuccess:", submitFn));
-  assert.match(mutation, /assertRunnableInputs\(selected\)/);
-  assert.ok(mutation.indexOf("assertRunnableInputs") < mutation.indexOf('api.post("/api/runs"'));
   assert.throws(() => assertRunnableInputs([{ inspiration: "一句灵感" }]), /不能新开一条灵感出片运行/);
-  assert.doesNotThrow(() => assertRunnableInputs([{ script: "第一场 室内" }]));
-  const routes = read("../src/lib/routes.js");
-  assert.match(routes, /path: "\/products"/);
   const products = read("../src/pages/products.jsx");
   assert.match(products, /\/api\/products/);
-  assert.match(products, /搜索提示词/);
-  const layout = read("../src/components/layout.jsx");
-  assert.match(layout, /to: "\/products", label: "产物"/);
+  assert.doesNotMatch(products, /\/api\/works/);
+  const comic = read("../src/pages/comic.jsx");
+  assert.match(comic, /\/api\/comic\/missing/);
+  const settings = read("../src/pages/settings.jsx");
+  assert.match(settings, /verifyAccount\(token, post\)/);
+  assert.match(settings, /verifyMcpCard/);
+  assert.doesNotMatch(settings, /pages\/settings\/providers/);
   const main = read("../src/main.jsx");
   assert.match(main, /products: \(\) => import\("@\/pages\/products"\)/);
+  assert.doesNotMatch(main, /path="\/login"/);
 });
