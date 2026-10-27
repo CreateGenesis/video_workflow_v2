@@ -15,17 +15,18 @@ from cvplatform.gates import GRID_SENTENCE, GateError, h3_auth_header
 
 def probe_text(base_url: str, token: str, *, transport=None) -> dict[str, Any]:
     transport = transport or _http
+    sent = {"messages": [{"role": "user", "content": "hi"}]}
     try:
-        body = transport("POST", base_url.rstrip("/") + "/v1/chat/completions", {"messages": [{"role": "user", "content": "hi"}]}, token)
+        body = transport("POST", base_url.rstrip("/") + "/v1/chat/completions", sent, token)
     except Exception as exc:  # noqa: BLE001 — probe must return the upstream error text
-        return {"ok": False, "reply": "", "error": str(exc)}
+        return {"ok": False, "reply": "", "sent": sent, "error": str(exc)}
     reply = ""
     if isinstance(body, dict):
         choices = body.get("choices") or []
         if choices:
             reply = ((choices[0].get("message") or {}).get("content")) or ""
         reply = reply or body.get("reply") or ""
-    return {"ok": bool(reply), "reply": reply, "error": "" if reply else json.dumps(body, ensure_ascii=False)}
+    return {"ok": bool(reply), "reply": reply, "sent": sent, "error": "" if reply else json.dumps(body, ensure_ascii=False)}
 
 
 def probe_image(base_url: str, token: str, *, transport=None) -> dict[str, Any]:

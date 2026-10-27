@@ -219,7 +219,11 @@ def submit_ratios(session: Session, episode_id: str, pairs: list[dict[str, Any]]
         )
 
 
-def assign_slot(session: Session, episode_id: str, *, asset_id: str, kind: str, number: int, segment_id: str | None = None, product_id: str | None = None, empty: bool = False) -> dict[str, Any]:
+def assign_slot(session: Session, episode_id: str, *, asset_id: str, kind: str, number: int, segment_id: str | None = None, product_id: str | None = None, empty: bool = False, accepted: bool = True) -> dict[str, Any]:
+    from cvplatform.gates import reject_unaccepted_frame
+
+    if not empty:
+        reject_unaccepted_frame(kind, accepted)
     maps = session.execute(
         text("SELECT * FROM number_maps WHERE episode_id = :id"),
         {"id": episode_id},
@@ -315,7 +319,24 @@ def start_published(session: Session, version_id: str, script: str) -> dict[str,
     from cvplatform.jobs import enqueue
 
     job = enqueue(session, workspace_id="ws", job_type="segment_script", payload={"script": script, "episode_id": episode_id})
-    return {"episode_id": episode_id, "job_id": job["id"], "copied": False}
+    pinned = _loads(version["pinned_json"], {})
+    for item in pinned.get("number_map") or []:
+        session.execute(
+            text(
+                """
+                INSERT INTO number_maps (id, episode_id, asset_id, kind, number)
+                VALUES (:id, :episode_id, :asset_id, :kind, :number)
+                """
+            ),
+            {
+                "id": "map_" + uuid.uuid4().hex[:10],
+                "episode_id": episode_id,
+                "asset_id": item["asset_id"],
+                "kind": item["kind"],
+                "number": item["number"],
+            },
+        )
+    return {"episode_id": episode_id, "job_id": job["id"], "copied_segments": 0, "copied": False, "reallocated": False}
 
 
 def accept_segment_script(session: Session, episode_id: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -323,9 +344,28 @@ def accept_segment_script(session: Session, episode_id: str, rows: list[dict[str
     return save_segments(session, episode_id, rows, episode.get("dialogue_mode"))
 
 
-def submit_probe(session: Session, segment_id: str, *, resolution: str, mode: str, duration: float, rules: dict[str, Any], seed: str) -> dict[str, Any]:
+def submit_probe(session: Session, segment_id: str, *, resolution: str, mode: str, duration: float, rules: dict[str, Any], seed: str, audio_binding: str = "") -> dict[str, Any]:
+    from cvplatform.gates import old_first_frame_blocks, reject_wrong_character_audio
+
     if not seed:
         raise GateError("seed", "没有 seed 就拒绝探针")
+    current = session.execute(text("SELECT * FROM segments WHERE id = :id"), {"id": segment_id}).mappings().first()
+    if current is None:
+        raise GateError("missing", "没有这一段")
+    if not current["prompt_accepted"] and current["prompt"]:
+        raise GateError("prompt", "旧提示词不能进入探针")
+    first = session.execute(
+        text("SELECT empty, product_id FROM slots WHERE segment_id = :id AND kind = '首帧'"),
+        {"id": segment_id},
+    ).mappings().first()
+    if first is None or first["empty"] or not first["product_id"]:
+        raise GateError("slot", "ref_image_0 为空不能探针")
+    stale = session.execute(
+        text("SELECT id FROM slots WHERE segment_id = :id AND kind = '首帧' AND asset_version_id = 'stale'"),
+        {"id": segment_id},
+    ).first()
+    old_first_frame_blocks(stale is not None)
+    reject_wrong_character_audio(audio_binding)
     saved = probe_spec(resolution, mode, duration, rules)
     session.execute(
         text(

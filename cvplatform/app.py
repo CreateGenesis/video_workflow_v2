@@ -6,6 +6,7 @@ import os
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from sqlalchemy import text
 from pydantic import BaseModel, Field
 
 from cvplatform.comic import (
@@ -33,7 +34,18 @@ from cvplatform.comic import (
     submit_ratios,
 )
 from cvplatform.db import init_schema, session
-from cvplatform.gates import GateError
+from cvplatform.gates import (
+    COMMANDS,
+    GateError,
+    can_generate_first_frame,
+    command_before,
+    forbid_reference_write,
+    g4_checks_seam,
+    may_export_ids,
+    next_probe_allowed,
+    probe_aspect_reference,
+    require_price,
+)
 from cvplatform.jobs import accept_write_prompt, agent_insert_business, claim, complete, enqueue, inspect
 from cvplatform.probes import (
     judge_benchmark,
@@ -107,10 +119,11 @@ def _seed() -> None:
             text(
                 """
                 INSERT INTO workflow_versions (id, name, protocol, pinned_json, published)
-                VALUES ('wf_comic', '漫剧九步', 'video.autodl-h3', '{}', 1)
+                VALUES ('wf_comic', '漫剧九步', 'video.autodl-h3', :pinned, 1)
                 ON CONFLICT(id) DO NOTHING
                 """
-            )
+            ),
+            {"pinned": '{"number_map":[{"asset_id":"role-a","kind":"角色","number":1}]}'},
         )
         db.execute(
             text(
@@ -267,6 +280,7 @@ class SlotIn(BaseModel):
     segment_id: str | None = None
     product_id: str | None = None
     empty: bool = False
+    accepted: bool = True
 
 
 @app.post("/api/episodes/{episode_id}/slots")
@@ -340,10 +354,23 @@ def missing(episode_id: str) -> dict[str, Any]:
 
 
 @app.post("/api/segments/{segment_id}/probe")
-def post_probe(segment_id: str, resolution: str, mode: str, duration: float, seed: str, rules: dict[str, Any] | None = None) -> dict[str, Any]:
+def post_probe(segment_id: str, resolution: str, mode: str, duration: float, seed: str, audio_binding: str = "", rules: dict[str, Any] | None = None) -> dict[str, Any]:
     try:
         with session() as db:
-            return submit_probe(db, segment_id, resolution=resolution, mode=mode, duration=duration, rules=rules or {}, seed=seed)
+            opened = submit_probe(
+                db,
+                segment_id,
+                resolution=resolution,
+                mode=mode,
+                duration=duration,
+                rules=rules or {},
+                seed=seed,
+                audio_binding=audio_binding,
+            )
+            current = db.execute(text("SELECT duration FROM segments WHERE id = :id"), {"id": segment_id}).first()
+        opened["segment_duration"] = current[0]
+        opened["aspect_reference"] = probe_aspect_reference(resolution)
+        return opened
     except GateError as exc:
         raise _fail(exc) from exc
 
@@ -450,6 +477,88 @@ def boot() -> dict[str, Any]:
     with session() as db:
         names = [row[0] for row in db.execute(text("SELECT name FROM provider_instances")).all()]
     return {"providers": names, "comfy": [name for name in names if "comfy" in name]}
+
+
+@app.post("/api/works/{work_id}/entities")
+def post_entity(work_id: str) -> dict[str, Any]:
+    try:
+        forbid_reference_write()
+    except GateError as exc:
+        raise _fail(exc) from exc
+    return {"id": work_id}
+
+
+@app.get("/api/commands")
+def get_commands() -> dict[str, Any]:
+    return {
+        "order": COMMANDS,
+        "g1_before_image": command_before("勾选 G1", "触发生图"),
+        "g2_before_probe": command_before("勾选 G2", "提交探针"),
+        "g3_after_probe": command_before("提交探针", "勾选 G3"),
+        "ratio_after_segments": command_before("提交分段", "提交同框比例"),
+    }
+
+
+class FrameAllow(BaseModel):
+    g1: str
+    speakers: list[str]
+    voices: list[str]
+
+
+@app.post("/api/first-frame/allowed")
+def first_frame_allowed(body: FrameAllow) -> dict[str, bool]:
+    try:
+        can_generate_first_frame(body.g1, body.speakers, body.voices)
+    except GateError as exc:
+        raise _fail(exc) from exc
+    return {"allowed": True}
+
+
+@app.get("/api/segments/{segment_id}/g4")
+def g4_rule(segment_id: str, number: int) -> dict[str, Any]:
+    return {"segment_id": segment_id, "checks_seam": g4_checks_seam(number)}
+
+
+@app.post("/api/estimate")
+def post_estimate(kind: str, unit_price: float | None = None, quantity: float = 1) -> dict[str, float]:
+    try:
+        price = require_price(kind, unit_price)
+    except GateError as exc:
+        raise _fail(exc) from exc
+    return {"amount": price * quantity}
+
+
+@app.post("/api/segments/{segment_id}/next-probe")
+def post_next_probe(segment_id: str, last_frame_slotted: bool) -> dict[str, Any]:
+    try:
+        next_probe_allowed(last_frame_slotted)
+    except GateError as exc:
+        raise _fail(exc) from exc
+    return {"segment_id": segment_id, "allowed": True}
+
+
+@app.post("/api/backfill/export")
+def post_export(process_stopped: bool) -> dict[str, bool]:
+    try:
+        may_export_ids(process_stopped)
+    except GateError as exc:
+        raise _fail(exc) from exc
+    return {"allowed": True}
+
+
+@app.get("/api/episodes/{episode_id}")
+def get_episode(episode_id: str) -> dict[str, Any]:
+    try:
+        with session() as db:
+            episode = episode_row(db, episode_id)
+            episode["segments"] = list_segments(db, episode_id)
+            episode["numbers"] = [
+                dict(row)
+                for row in db.execute(text("SELECT asset_id, kind, number FROM number_maps WHERE episode_id = :id"), {"id": episode_id}).mappings()
+            ]
+        return episode
+    except GateError as exc:
+        raise _fail(exc) from exc
 
 
 def main() -> None:

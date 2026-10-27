@@ -194,8 +194,8 @@ def validate_prompt(full_text: str, slots: list[dict[str, Any]], sections: dict[
             forbidden = f"<Subject {int(slot['number'])}>"
             if forbidden in full_text:
                 errors.append("empty_subject")
-    if "<Picture 1>" in sections.get("summary", "") and "ref_image_0" not in full_text:
-        errors.append("picture_1")
+    if picture_label_error(full_text):
+        errors.append("picture")
     if re.search(r"<Subject \d+>:", sections.get("summary", "") + sections.get("detailed_description", "")):
         if any(line.split(":", 1)[0] in sections.get("summary", "") for line in subject_lines(slots)):
             errors.append("subject_in_sections")
@@ -367,6 +367,98 @@ def promote_allowed(kind: str) -> bool:
 
 def used_keep(task_input: bool, clip_chain: bool, asset_link: bool, promoted: bool) -> bool:
     return promoted or task_input or clip_chain or asset_link
+
+
+COMMANDS = [
+    "查看缺什么",
+    "提交资产",
+    "请求锁段草稿",
+    "勾选 G1",
+    "确认是否对白",
+    "提交分段",
+    "补标说话角色",
+    "修改分段七列",
+    "确认分段",
+    "提交同框比例",
+    "指定槽位编号",
+    "触发生图",
+    "验收产物",
+    "把已验收对象写入槽位行",
+    "勾选 G2",
+    "提交 seed",
+    "请求提示词",
+    "提交探针",
+    "勾选 G3",
+    "提交正式段",
+    "标记质检",
+    "请求拼接",
+]
+
+
+def command_before(earlier: str, later: str) -> bool:
+    return COMMANDS.index(earlier) < COMMANDS.index(later)
+
+
+def g4_checks_seam(segment_number: int) -> bool:
+    return segment_number >= 2
+
+
+def can_generate_first_frame(g1: str, speakers: list[str], accepted_voices: list[str]) -> None:
+    if g1 != "passed":
+        raise GateError("g1", "勾选 G1 在触发生图之前")
+    missing = [name for name in speakers if name not in accepted_voices]
+    if missing:
+        raise GateError("voice", "缺已验收音色则不能生成首帧")
+
+
+def probe_aspect_reference(submitted_resolution: str) -> str:
+    """A low-resolution probe is judged against the resolution submitted this time."""
+    if submitted_resolution in {"", "1088x1920"} and submitted_resolution != "1088x1920":
+        raise GateError("aspect", "低分辨率探针不用 1088×1920 去判画幅")
+    return submitted_resolution
+
+
+def require_price(kind: str, unit_price: float | None) -> float:
+    if kind == "concat":
+        return 0.0
+    if unit_price is None:
+        raise GateError("price", "缺视频单价时正式段不能提交")
+    return float(unit_price)
+
+
+def next_probe_allowed(last_frame_slotted: bool) -> None:
+    if not last_frame_slotted:
+        raise GateError("last_frame", "本段新末帧未入槽时，下一段不能探针")
+
+
+def old_first_frame_blocks(stale: bool) -> None:
+    if stale:
+        raise GateError("first_frame", "旧首帧留在槽里就不能探针")
+
+
+def reject_unaccepted_frame(kind: str, accepted: bool) -> None:
+    if kind in {"首帧", "末帧", "同框比例图"} and not accepted:
+        raise GateError("accept", "未经验收命令不能写入槽位")
+
+
+def reject_wrong_character_audio(binding: str) -> None:
+    if binding == "ref_audio_1":
+        raise GateError("audio", "写成 ref_audio_1 时不能探针")
+
+
+def picture_label_error(text: str) -> str | None:
+    if "<Picture 2>" in text and "ref_image_0" in text and "<Picture 1>" not in text:
+        return "picture"
+    return None
+
+
+def may_export_ids(process_stopped: bool) -> None:
+    if not process_stopped:
+        raise GateError("backfill", "旧进程停止后才导出那 56 个 id")
+
+
+def forbid_reference_write() -> None:
+    raise GateError("reference", "不得新建 Reference 或 references")
 
 
 def h3_auth_header(token: str) -> str:
