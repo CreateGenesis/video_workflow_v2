@@ -5,4 +5,4 @@ description = "Agent-orchestrated video workflow service: exploration, workflows
 requires-python = ">=3.12"
 
 [tool.pytest.ini_options]
-testpaths = ["tests/v2"]
+testpaths = ["tests/v2", "tests/v3"]
