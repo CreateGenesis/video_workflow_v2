@@ -10,8 +10,8 @@ from agent.app import app as agent_app
 from cvplatform.app import app as platform_app
 
 
-def test_claim_once_routes_only_after_a_row_is_claimed(monkeypatch, tmp_path):
-    monkeypatch.setenv("CVGEN_PLATFORM_DATABASE_URL", "sqlite:///" + str(tmp_path / "jobs.db"))
+def test_claim_once_routes_only_after_a_row_is_claimed(monkeypatch, pg_database):
+    monkeypatch.setenv("CVGEN_PLATFORM_DATABASE_URL", pg_database)
     from cvplatform import db
 
     db.reset_engine()
@@ -68,8 +68,8 @@ def test_unverified_mcp_does_not_join_external_segment_script():
     assert attach_mcp(prompt) is None
 
 
-def test_health_distinguishes_processes(monkeypatch, tmp_path):
-    monkeypatch.setenv("CVGEN_PLATFORM_DATABASE_URL", "sqlite:///" + str(tmp_path / "p.db"))
+def test_health_distinguishes_processes(monkeypatch, pg_database):
+    monkeypatch.setenv("CVGEN_PLATFORM_DATABASE_URL", pg_database)
     from cvplatform import db
 
     db.reset_engine()

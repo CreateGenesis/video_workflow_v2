@@ -1,4 +1,4 @@
-"""Platform database. PostgreSQL in production, SQLite only for local tests."""
+"""Platform database. Production and the V3 suite use PostgreSQL."""
 
 from __future__ import annotations
 
@@ -299,6 +299,20 @@ SCHEMA_SQLITE = [
     "CREATE INDEX IF NOT EXISTS ix_jobs_status ON jobs(status)",
 ]
 
-SCHEMA_POSTGRES = [statement for statement in SCHEMA_SQLITE if not statement.startswith("CREATE INDEX")] + [
+def _postgres_statement(statement: str) -> str:
+    """Keep counters as integers. Flag columns stay numeric 0/1, not PostgreSQL booleans."""
+    if not statement.lstrip().startswith("CREATE TABLE"):
+        return statement
+    return statement.replace(" INTEGER NOT NULL DEFAULT 0", " SMALLINT NOT NULL DEFAULT 0").replace(
+        " INTEGER NOT NULL DEFAULT 1", " SMALLINT NOT NULL DEFAULT 1"
+    )
+
+
+SCHEMA_POSTGRES = [
+    _postgres_statement(statement)
+    for statement in SCHEMA_SQLITE
+    if not statement.startswith("CREATE INDEX")
+] + [
     "CREATE INDEX IF NOT EXISTS ix_products_prompt ON products (prompt)",
+    "CREATE INDEX IF NOT EXISTS ix_jobs_status ON jobs (status)",
 ]

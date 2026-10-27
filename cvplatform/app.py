@@ -136,7 +136,7 @@ def _seed() -> None:
                 """
                 INSERT INTO workflow_versions (id, name, protocol, pinned_json, published)
                 VALUES ('wf_comic', '漫剧九步', 'video.autodl-h3', :pinned, 1)
-                ON CONFLICT(id) DO NOTHING
+                ON CONFLICT (id) DO NOTHING
                 """
             ),
             {"pinned": '{"number_map":[{"asset_id":"role-a","kind":"角色","number":1}]}'},
@@ -146,7 +146,7 @@ def _seed() -> None:
                 """
                 INSERT INTO provider_instances (name, protocol, workflow_id, base_url, token, input_rules)
                 VALUES ('video.autodl-h3', 'autodl-h3', 'minimax_h3_803', '', '', '{}')
-                ON CONFLICT(name) DO NOTHING
+                ON CONFLICT (name) DO NOTHING
                 """
             )
         )
@@ -544,7 +544,7 @@ def save_mcp_card(db, body: McpIn, result: dict[str, Any]) -> dict[str, Any]:
             """
             INSERT INTO mcp_cards (id, workspace_id, name, transport, address, enabled, status, example, last_error, verified_at)
             VALUES (:id, 'ws', :name, :transport, :address, :enabled, :status, :example, :error, :verified_at)
-            ON CONFLICT(id) DO UPDATE SET
+            ON CONFLICT (id) DO UPDATE SET
               address = excluded.address,
               enabled = excluded.enabled,
               status = excluded.status,
