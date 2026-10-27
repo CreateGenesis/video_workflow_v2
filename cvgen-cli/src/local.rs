@@ -44,6 +44,15 @@ pub fn commands() -> Vec<Command> {
         local("media get", "cvgen media get <文件id> -o <保存路径>", "下载成片、接触表、参考图", vec![id("文件 id（artifact）"), output]),
         local("job wait", "cvgen job wait <任务id> [--timeout 秒]", "一直等到任务结束，持续打印进度", vec![id("任务 id"), timeout()]),
         local("run wait", "cvgen run wait <运行id> [--timeout 秒]", "等到运行结束或停在闸门", vec![id("运行 id"), timeout()]),
+        local(
+            "comic missing",
+            "cvgen comic missing --episode <集id> [--base 平台地址]",
+            "查看缺什么：只问平台闸门，不在本地拼 H3 请求",
+            vec![
+                ArgSpec::flag("episode", "--episode", "string", true, "集 id"),
+                ArgSpec::flag("base", "--base", "string", false, "平台地址；不写则用已登录地址"),
+            ],
+        ),
     ]
 }
 
@@ -87,6 +96,14 @@ pub fn run(paths: &Paths, command: &Command, tokens: &[String]) -> Result<()> {
         "media get" => media_get(&signed_in(paths)?, &values.need("id"), &values.need("output")),
         "job wait" => job_wait(&signed_in(paths)?, &values.need("id"), values.int("timeout")),
         "run wait" => run_wait(&signed_in(paths)?, &values.need("id"), values.int("timeout")),
+        "comic missing" => {
+            let api = if let Some(base) = values.text("base") {
+                Api::new(&base, None)?
+            } else {
+                signed_in(paths)?
+            };
+            comic_missing(&api, &values.need("episode"))
+        }
         other => Err(Failure::usage(format!("本客户端没有实现 {other}，请下载新版客户端"))),
     }
 }
@@ -104,6 +121,19 @@ pub fn not_signed_in() -> Failure {
 pub fn signed_in(paths: &Paths) -> Result<Api> {
     let auth = config::load_auth(paths)?.ok_or_else(not_signed_in)?;
     Api::new(&auth.base, Some(&auth.token))
+}
+
+fn comic_missing(api: &Api, episode: &str) -> Result<()> {
+    let reply = api.call("GET", &format!("/api/comic/missing?episode_id={}", episode), None)?;
+    let body = reply.json()?;
+    let stopped = body.get("stopped_at").and_then(Value::as_str).unwrap_or("未知");
+    let missing = body.get("missing").cloned().unwrap_or(Value::Array(vec![]));
+    println!("停在：{stopped}");
+    println!("缺：{missing}");
+    if body.get("local_h3").and_then(Value::as_bool).unwrap_or(false) {
+        return Err(Failure::usage("客户端不能在本地拼 H3 请求"));
+    }
+    Ok(())
 }
 
 fn host_name() -> String {

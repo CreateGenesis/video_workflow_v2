@@ -73,7 +73,7 @@ export function GettingStarted() {
       done: hasRun,
       icon: Rocket,
       title: "发起第一个运行",
-      text: "选择已发布的工作流，填写灵感，确认花费后排队执行。",
+      text: "选择已发布的九步漫剧工作流，带上剧本后排队。不能新开一条灵感出片运行。",
       action: published && can("runs:create") ? { to: "/runs/new", label: "发起运行" } : null,
     },
   ];

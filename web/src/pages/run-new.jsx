@@ -43,7 +43,7 @@ export default function RunNewPage() {
 
   return (
     <div>
-      <PageHeader title="发起运行" back={{ to: "/runs", label: "运行" }} description="选择已发布的工作流，填写输入。可以一次提交多组输入（批量）。" />
+      <PageHeader title="发起运行" back={{ to: "/runs", label: "运行" }} description="只能提交九步漫剧工作流，并带上剧本。不能新开一条灵感出片运行。" />
       {!workflows.data && (workflows.isLoading || workflows.isPending) ? (
         <SkeletonRows rows={3} />
       ) : workflows.isError ? (

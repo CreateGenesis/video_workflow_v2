@@ -22,6 +22,22 @@ const TABS = [
   { value: "account", label: "我的账号", Component: AccountTab },
 ];
 
+function AccountVerifyCard() {
+  return (
+    <form className="mb-4 rounded-md border border-[#303030] p-3" data-testid="account-verify">
+      <p className="text-sm font-medium">账号验证</p>
+      <label className="mt-2 block text-xs text-[#aaa]" htmlFor="account-token">
+        填写
+        <input id="account-token" name="token" type="password" className="mt-1 w-full rounded border border-[#444] bg-transparent px-2 py-1" autoComplete="off" />
+      </label>
+      <p className="mt-2 text-xs text-[#888]">示例：ghp_ 加说明，不放真实值。从令牌页面复制。</p>
+      <button type="button" className="mt-2 rounded bg-[#0b8ce9] px-3 py-1 text-sm text-white" data-testid="verify-button">
+        验证
+      </button>
+    </form>
+  );
+}
+
 export default function SettingsPage() {
   const { can } = useSession();
   const [params, setParams] = useSearchParams();
@@ -32,6 +48,7 @@ export default function SettingsPage() {
   return (
     <div>
       <PageHeader title="设置" description={can("admin") ? "供应商、资源池、账号、密钥与系统开关。" : "你的设备、工具下载和账号。"} />
+      <AccountVerifyCard />
       <Tabs value={tab} onValueChange={(value) => setParams({ tab: value }, { replace: true })}>
         <TabsList>
           {tabs.map((item) => (

@@ -25,6 +25,7 @@ const LOADERS = {
   run: () => import("@/pages/run"),
   queue: () => import("@/pages/queue"),
   library: () => import("@/pages/library"),
+  products: () => import("@/pages/products"),
   settings: () => import("@/pages/settings"),
   "not-found": () => import("@/pages/not-found"),
 };

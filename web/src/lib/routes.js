@@ -22,6 +22,7 @@ export const CONSOLE_ROUTES = [
   { path: "/runs/:id", page: "run", module: "pages/run.jsx", section: "运行" },
   { path: "/queue", page: "queue", module: "pages/queue.jsx", section: "队列" },
   { path: "/library", page: "library", module: "pages/library.jsx", section: "素材库" },
+  { path: "/products", page: "products", module: "pages/products.jsx", section: "产物" },
   { path: "/settings", page: "settings", module: "pages/settings.jsx", section: "设置" },
 ];
 

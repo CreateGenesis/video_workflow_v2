@@ -1,0 +1,22 @@
+# V3: platform and agent are separate processes. They share only the jobs table.
+# The platform owns every business table. The agent has no INSERT on those tables.
+services:
+  platform-api:
+    image: cvgen:v3
+    command: ["python", "-m", "cvplatform"]
+    environment:
+      CVGEN_PLATFORM_PORT: "8093"
+      CVGEN_PLATFORM_DATABASE_URL: ${CVGEN_PLATFORM_DATABASE_URL:-sqlite:////data/platform.db}
+    ports:
+      - "127.0.0.1:8093:8093"
+
+  agent-worker:
+    image: cvgen:v3
+    command: ["python", "-m", "agent"]
+    environment:
+      CVGEN_AGENT_PORT: "8094"
+      CVGEN_PLATFORM_URL: http://platform-api:8093
+    ports:
+      - "127.0.0.1:8094:8094"
+    depends_on:
+      - platform-api
