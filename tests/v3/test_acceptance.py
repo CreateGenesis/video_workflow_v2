@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from sqlalchemy import text
 
-from agent.app import route
+from agent.app import dispatch, comic_team
 from cvplatform.comic import backfill_decision
 from cvplatform.db import session
 from cvplatform.gates import GRID_SENTENCE, validate_prompt
@@ -295,7 +295,8 @@ def test_probe_errors_and_lead_routing(client):
         probe_h3("http://example", "Bearer secret", "minimax_h3_803", transport=boom)
     except Exception as exc:  # noqa: BLE001
         assert "裸 token" in str(exc)
-    assert route("write_prompt") == "prompt-only"
-    assert route("segment_script") == "segment-only"
+    team = comic_team()
+    assert dispatch(team, "write_prompt") == "prompt-only"
+    assert dispatch(team, "segment_script") == "segment-only"
     assert judge_benchmark("write_prompt", {"summary": "a", "detailed_description": "b", "overall_soundscape": "c"}, visual=True) == "passed"
     assert judge_benchmark("write_prompt", {"summary": "subject_definitions"}, visual=True) == "failed"

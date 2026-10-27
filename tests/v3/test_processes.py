@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from agent.app import app as agent_app
@@ -40,6 +41,31 @@ def test_claim_once_routes_only_after_a_row_is_claimed(monkeypatch, tmp_path):
         assert missed.json()["member"] is None
         assert platform.get("/api/health").json()["process"] == "platform"
     db.reset_engine()
+
+
+def test_unverified_mcp_does_not_join_external_segment_script():
+    from agent.app import attach_mcp, comic_team, dispatch
+
+    job = {
+        "type": "segment_script",
+        "input": {"needs_external": True, "mcp": {"status": "未验证", "address": "http://mcp.example/mcp"}},
+    }
+    with pytest.raises(ValueError, match="未验证的 MCP"):
+        attach_mcp(job)
+    without_external = {"type": "segment_script", "input": {"needs_external": False, "mcp": {"status": "未验证"}}}
+    assert attach_mcp(without_external) is None
+    verified = {
+        "type": "segment_script",
+        "input": {"needs_external": True, "mcp": {"status": "可用", "address": "http://mcp.example/mcp"}},
+    }
+    tool = attach_mcp(verified)
+    assert type(tool).__name__ == "MCPTools"
+    team = comic_team(tool)
+    assert type(team.members[0].tools[0]).__name__ == "MCPTools"
+    assert team.members[1].tools in (None, [])
+    assert dispatch(team, "segment_script") == "segment-only"
+    prompt = {"type": "write_prompt", "input": {"needs_external": True, "mcp": {"status": "可用", "address": "http://mcp.example/mcp"}}}
+    assert attach_mcp(prompt) is None
 
 
 def test_health_distinguishes_processes(monkeypatch, tmp_path):

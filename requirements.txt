@@ -9,3 +9,5 @@ psycopg[binary]==3.3.6
 jsonschema==4.26.0
 cryptography==50.0.2
 anthropic==2.1.0
+agno==3.1.10
+mcp==2.3.0
