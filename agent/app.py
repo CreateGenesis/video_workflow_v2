@@ -22,6 +22,7 @@ MEMBERS = {
     "segment_script": ("segment-only", "只回分段表的七列"),
     "write_prompt": ("prompt-only", "只填三段提示词"),
     "extract_reference": ("lock-draft-only", "只回可复制的锁段草稿"),
+    "specialize_character": ("specialize-only", "只回当前环境下压缩后的人物特征"),
 }
 
 

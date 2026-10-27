@@ -57,7 +57,7 @@ def contains_secret(payload: Any) -> bool:
 
 
 def enqueue(session: Session, *, workspace_id: str, job_type: str, payload: dict[str, Any], max_attempts: int = 3) -> dict[str, Any]:
-    if job_type not in {"extract_reference", "segment_script", "write_prompt"}:
+    if job_type not in {"extract_reference", "segment_script", "write_prompt", "specialize_character"}:
         raise GateError("job_type", "jobs 只承担三类文本任务")
     if contains_secret(payload):
         raise GateError("secret", "密钥不进 jobs.input")

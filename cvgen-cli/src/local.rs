@@ -45,6 +45,45 @@ pub fn commands() -> Vec<Command> {
         local("job wait", "cvgen job wait <任务id> [--timeout 秒]", "一直等到任务结束，持续打印进度", vec![id("任务 id"), timeout()]),
         local("run wait", "cvgen run wait <运行id> [--timeout 秒]", "等到运行结束或停在闸门", vec![id("运行 id"), timeout()]),
         local(
+            "character add",
+            "cvgen character add --name <名称> --image <图片> --setting <设定文件> --voice <音频>",
+            "上传人物三件套。图片可重复。不在本机保存人物",
+            vec![
+                ArgSpec::context("workspace_id", "workspace"),
+                ArgSpec::flag("name", "--name", "string", true, "人物名称"),
+                ArgSpec::flag("image", "--image", "list", true, "参考图，可重复"),
+                ArgSpec::flag("setting", "--setting", "string", true, "人物设定文件"),
+                ArgSpec::flag("voice", "--voice", "string", true, "音色文件"),
+            ],
+        ),
+        local(
+            "character image add",
+            "cvgen character image add <id> --image <图片> --revision <修订号>",
+            "按已读取的修订号追加参考图，不替换已有图片",
+            vec![
+                ArgSpec::positional("id", 0, "string", true, "人物 id"),
+                ArgSpec::flag("image", "--image", "list", true, "要追加的参考图，可重复"),
+                ArgSpec::flag("revision", "--revision", "int", true, "GET 返回的修订号"),
+            ],
+        ),
+        local(
+            "character get",
+            "cvgen character get <id>",
+            "读取人物修订号、图片、音色和完整设定",
+            vec![ArgSpec::positional("id", 0, "string", true, "人物 id")],
+        ),
+        local(
+            "character setting",
+            "cvgen character setting <id> --revision <修订号> --old <原文> --new <替换>",
+            "按唯一原文替换人物设定，不整篇覆盖",
+            vec![
+                ArgSpec::positional("id", 0, "string", true, "人物 id"),
+                ArgSpec::flag("revision", "--revision", "int", true, "GET 返回的修订号"),
+                ArgSpec::flag("old", "--old", "string", true, "当前设定里正好出现一次的原文"),
+                ArgSpec::flag("new", "--new", "string", true, "替换成的文本，空字符串表示删掉这一处"),
+            ],
+        ),
+        local(
             "comic missing",
             "cvgen comic missing --episode <集id> [--base 平台地址]",
             "查看缺什么：只问平台闸门，不在本地拼 H3 请求",
@@ -93,6 +132,10 @@ pub fn run(paths: &Paths, command: &Command, tokens: &[String]) -> Result<()> {
         "workspace use" => workspace_use(paths, &signed_in(paths)?, &values.need("id"), context),
         "work use" => work_use(paths, &signed_in(paths)?, &values.need("id")),
         "upload" => upload(&signed_in(paths)?, &values),
+        "character add" => character_add(&signed_in(paths)?, &values),
+        "character image add" => character_image_add(&signed_in(paths)?, &values),
+        "character get" => character_get(&signed_in(paths)?, &values.need("id")),
+        "character setting" => character_setting(&signed_in(paths)?, &values),
         "media get" => media_get(&signed_in(paths)?, &values.need("id"), &values.need("output")),
         "job wait" => job_wait(&signed_in(paths)?, &values.need("id"), values.int("timeout")),
         "run wait" => run_wait(&signed_in(paths)?, &values.need("id"), values.int("timeout")),
@@ -308,6 +351,86 @@ pub fn guess_mime(path: &Path) -> &'static str {
         "pdf" => "application/pdf",
         _ => "application/octet-stream",
     }
+}
+
+fn upload_path(api: &Api, path: &Path, workspace_id: &str) -> Result<String> {
+    let file = File::open(path).map_err(|err| Failure::usage(format!("无法打开 {}：{err}", path.display())))?;
+    let meta = file.metadata().map_err(|err| Failure::usage(format!("无法读取 {}：{err}", path.display())))?;
+    if !meta.is_file() {
+        return Err(Failure::usage(format!("{} 不是文件", path.display())));
+    }
+    let filename = path.file_name().and_then(|name| name.to_str()).unwrap_or("upload.bin").to_string();
+    let part = multipart::Part::reader_with_length(file, meta.len())
+        .file_name(filename.clone())
+        .mime_str(guess_mime(path))
+        .map_err(|err| Failure::usage(err.to_string()))?;
+    let form = multipart::Form::new()
+        .text("workspace_id", workspace_id.to_string())
+        .text("label", filename)
+        .part("file", part);
+    let reply = api.upload("/api/uploads", form)?;
+    let body = reply.json()?;
+    body.get("id")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| Failure::server("上传没有返回文件 id"))
+}
+
+fn character_add(api: &Api, values: &Values) -> Result<()> {
+    let workspace = values.need("workspace_id");
+    let images = values.0.get("image").and_then(Value::as_array).cloned().unwrap_or_default();
+    if images.is_empty() {
+        return Err(Failure::usage("至少要有一张参考图"));
+    }
+    let mut image_ids = Vec::new();
+    for image in images {
+        let path = image.as_str().ok_or_else(|| Failure::usage("参考图路径无效"))?;
+        image_ids.push(upload_path(api, Path::new(path), &workspace)?);
+    }
+    let setting_path = PathBuf::from(values.need("setting"));
+    let setting = fs::read_to_string(&setting_path).map_err(|err| Failure::usage(format!("无法读取设定：{err}")))?;
+    let voice_id = upload_path(api, Path::new(&values.need("voice")), &workspace)?;
+    let body = json!({
+        "name": values.need("name"),
+        "images": image_ids,
+        "setting": setting,
+        "voice_file_id": voice_id,
+        "workspace_id": workspace,
+    });
+    print_json(&api.post_json("/api/characters", &body)?);
+    Ok(())
+}
+
+fn character_image_add(api: &Api, values: &Values) -> Result<()> {
+    let current = api.get_json(&format!("/api/characters/{}", values.need("id")))?;
+    let workspace = current.get("workspace_id").and_then(Value::as_str).unwrap_or("ws");
+    let images = values.0.get("image").and_then(Value::as_array).cloned().unwrap_or_default();
+    let mut image_ids = Vec::new();
+    for image in images {
+        let path = image.as_str().ok_or_else(|| Failure::usage("参考图路径无效"))?;
+        image_ids.push(upload_path(api, Path::new(path), workspace)?);
+    }
+    let body = json!({
+        "images": image_ids,
+        "revision": values.int("revision").ok_or_else(|| Failure::usage("缺少修订号"))?,
+    });
+    print_json(&api.post_json(&format!("/api/characters/{}/images", values.need("id")), &body)?);
+    Ok(())
+}
+
+fn character_get(api: &Api, id: &str) -> Result<()> {
+    print_json(&api.get_json(&format!("/api/characters/{id}"))?);
+    Ok(())
+}
+
+fn character_setting(api: &Api, values: &Values) -> Result<()> {
+    let body = json!({
+        "revision": values.int("revision").ok_or_else(|| Failure::usage("缺少修订号"))?,
+        "old": values.need("old"),
+        "new": values.need("new"),
+    });
+    print_json(&api.post_json(&format!("/api/characters/{}/setting", values.need("id")), &body)?);
+    Ok(())
 }
 
 fn upload(api: &Api, values: &Values) -> Result<()> {
@@ -603,6 +726,16 @@ mod tests {
             let values = args::bind(media, &parsed, &Context::default(), &mut read_stdin).unwrap();
             assert_eq!(values, vec![(0, json!("art_1")), (1, json!("out.mp4"))]);
         }
+        let character = commands.iter().find(|c| c.name == "character add").unwrap();
+        let parsed = args::parse(
+            character,
+            &["--name", "红罐", "--image", "a.png", "--image", "b.png", "--setting", "set.txt", "--voice", "v.wav"]
+                .into_iter()
+                .map(str::to_string)
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        assert_eq!(parsed.flags.iter().filter(|(index, _)| character.args[*index].name == "image").count(), 2);
         let upload = commands.iter().find(|c| c.name == "upload").unwrap();
         let parsed = args::parse(upload, &["a.png".to_string()]).unwrap();
         let err = args::bind(upload, &parsed, &Context::default(), &mut read_stdin).unwrap_err();

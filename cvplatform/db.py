@@ -287,6 +287,44 @@ SCHEMA_SQLITE = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS characters (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      images_json TEXT NOT NULL,
+      setting TEXT NOT NULL,
+      voice_file_id TEXT NOT NULL,
+      revision INTEGER NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS character_refs (
+      id TEXT PRIMARY KEY,
+      character_id TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      segment_id TEXT,
+      prototype_id TEXT,
+      number INTEGER NOT NULL,
+      images_json TEXT NOT NULL,
+      image_numbers_json TEXT NOT NULL,
+      voice_file_id TEXT NOT NULL,
+      setting TEXT NOT NULL,
+      environment_json TEXT NOT NULL,
+      compressed TEXT,
+      job_id TEXT,
+      stale INTEGER NOT NULL DEFAULT 0
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS uploads (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      media_type TEXT NOT NULL,
+      byte_size INTEGER NOT NULL
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS graph_nodes (
       id TEXT PRIMARY KEY,
       episode_id TEXT NOT NULL,

@@ -165,7 +165,7 @@ def subject_lines(slots: list[dict[str, Any]]) -> list[str]:
     """Empty slots occupy a number but emit no Subject line. Filled slots keep their number."""
     lines = []
     for slot in slots:
-        if slot.get("kind") not in {"角色", "场景", "道具"}:
+        if slot.get("kind") not in {"角色", "场景", "道具", "人物"}:
             continue
         if slot.get("empty") or not slot.get("lock_text"):
             continue
@@ -179,18 +179,18 @@ def validate_prompt(full_text: str, slots: list[dict[str, Any]], sections: dict[
     if "subject_definitions" in (sections.get("summary", "") + sections.get("detailed_description", "") + sections.get("overall_soundscape", "")):
         errors.append("second_lock_block")
     for slot in slots:
-        if slot.get("kind") not in {"角色", "场景", "道具"} or slot.get("empty"):
+        if slot.get("kind") not in {"角色", "场景", "道具", "人物"} or slot.get("empty"):
             continue
         expected = f"<Subject {int(slot['number'])}>: {slot['lock_text']}"
         if expected not in full_text:
             errors.append("lock_mismatch")
-        if slot["kind"] == "角色":
+        if slot["kind"] in {"角色", "人物"}:
             audio = character_slots(int(slot["number"]))["audio"]
             wrong = f"ref_audio_{int(slot['number'])}"
             if wrong in full_text and audio not in full_text:
                 errors.append("audio_slot")
     for slot in slots:
-        if slot.get("empty") and slot.get("kind") in {"角色", "场景", "道具"}:
+        if slot.get("empty") and slot.get("kind") in {"角色", "场景", "道具", "人物"}:
             forbidden = f"<Subject {int(slot['number'])}>"
             if forbidden in full_text:
                 errors.append("empty_subject")
@@ -234,11 +234,11 @@ def formal_submit_body(segment: dict[str, Any], slots: list[dict[str, Any]]) -> 
     for slot in slots:
         if slot.get("empty") or slot.get("kind") == "首帧":
             continue
-        if slot["kind"] in {"角色", "场景", "道具"}:
+        if slot["kind"] in {"角色", "场景", "道具", "人物"}:
             body[f"ref_image_{int(slot['number'])}"] = slot.get("file")
         if slot["kind"] == "音色":
             body[f"ref_audio_{int(slot['number'])}"] = slot.get("file")
-        if slot["kind"] == "角色" and slot.get("audio_file"):
+        if slot["kind"] in {"角色", "人物"} and slot.get("audio_file"):
             body[f"ref_audio_{int(slot['number']) - 1}"] = slot["audio_file"]
     return body
 
@@ -360,7 +360,7 @@ def _parse_aspect(value: str | None) -> tuple[int, int]:
 
 
 def promote_allowed(kind: str) -> bool:
-    if kind in NOT_PROMOTABLE:
+    if kind in NOT_PROMOTABLE or kind == "人物":
         return False
     return kind in PROMOTABLE
 

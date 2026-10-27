@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import os
+import uuid
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Form, HTTPException, UploadFile
 from sqlalchemy import text
 from pydantic import BaseModel, Field
 
+from cvplatform.characters import accept_specialized, add_images, cite_character, create_character, replace_setting
 from cvplatform.comic import (
     accept_published,
     apply_change,
@@ -321,6 +323,147 @@ def post_slot(episode_id: str, body: SlotIn, role: str = "platform") -> dict[str
 def get_graph(segment_id: str) -> dict[str, Any]:
     with session() as db:
         return {"items": graph_for(db, segment_id)}
+
+
+class CharacterIn(BaseModel):
+    name: str
+    images: list[str]
+    setting: str
+    voice_file_id: str
+    workspace_id: str = "ws"
+
+
+class CharacterImagesIn(BaseModel):
+    images: list[str]
+    revision: int
+
+
+class CharacterSettingIn(BaseModel):
+    revision: int
+    old: str
+    new: str
+
+
+class CharacterCiteIn(BaseModel):
+    number: int
+    occupied_image_numbers: list[int] = Field(default_factory=list)
+    image_limit: int = 9
+    environment: dict[str, Any]
+    segment_id: str | None = None
+    prototype_id: str | None = None
+
+
+class SpecializeIn(BaseModel):
+    compressed: str
+
+
+@app.post("/api/uploads")
+async def post_upload(file: UploadFile, workspace_id: str = Form("ws"), label: str = Form("")) -> dict[str, Any]:
+    content = await file.read()
+    upload_id = "file_" + uuid.uuid4().hex[:12]
+    with session() as db:
+        db.execute(
+            text(
+                """
+                INSERT INTO uploads (id, workspace_id, name, media_type, byte_size)
+                VALUES (:id, :workspace_id, :name, :media_type, :byte_size)
+                """
+            ),
+            {
+                "id": upload_id,
+                "workspace_id": workspace_id,
+                "name": label or file.filename or "upload.bin",
+                "media_type": file.content_type or "application/octet-stream",
+                "byte_size": len(content),
+            },
+        )
+    return {"id": upload_id, "bytes": len(content)}
+
+
+@app.post("/api/characters")
+def post_character(body: CharacterIn, role: str = "platform") -> dict[str, Any]:
+    _role(role)
+    try:
+        with session() as db:
+            return create_character(
+                db,
+                name=body.name,
+                images=body.images,
+                setting=body.setting,
+                voice_file_id=body.voice_file_id,
+                workspace_id=body.workspace_id,
+            )
+    except GateError as exc:
+        raise _fail(exc) from exc
+
+
+@app.get("/api/characters/{character_id}")
+def get_character(character_id: str) -> dict[str, Any]:
+    from cvplatform.characters import _character
+
+    try:
+        with session() as db:
+            return _character(db, character_id)
+    except GateError as exc:
+        raise _fail(exc) from exc
+
+
+@app.post("/api/characters/{character_id}/images")
+def post_character_images(character_id: str, body: CharacterImagesIn, role: str = "platform") -> dict[str, Any]:
+    _role(role)
+    try:
+        with session() as db:
+            return add_images(db, character_id, body.images, body.revision)
+    except GateError as exc:
+        raise _fail(exc) from exc
+
+
+@app.post("/api/characters/{character_id}/setting")
+def post_character_setting(character_id: str, body: CharacterSettingIn, role: str = "platform") -> dict[str, Any]:
+    _role(role)
+    try:
+        with session() as db:
+            return replace_setting(db, character_id, body.revision, body.old, body.new)
+    except GateError as exc:
+        raise _fail(exc) from exc
+
+
+@app.post("/api/characters/{character_id}/cite")
+def post_character_cite(character_id: str, body: CharacterCiteIn) -> dict[str, Any]:
+    try:
+        with session() as db:
+            return cite_character(
+                db,
+                character_id=character_id,
+                number=body.number,
+                occupied_image_numbers=body.occupied_image_numbers,
+                image_limit=body.image_limit,
+                environment=body.environment,
+                segment_id=body.segment_id,
+                prototype_id=body.prototype_id,
+            )
+    except GateError as exc:
+        raise _fail(exc) from exc
+
+
+@app.post("/api/characters/refs/{ref_id}/ready")
+def post_character_ready(ref_id: str) -> dict[str, Any]:
+    from cvplatform.characters import specialized_ready
+
+    try:
+        with session() as db:
+            return specialized_ready(db, ref_id)
+    except GateError as exc:
+        raise _fail(exc) from exc
+
+
+@app.post("/api/jobs/{job_id}/accept-character")
+def post_accept_character(job_id: str, body: SpecializeIn) -> dict[str, Any]:
+    try:
+        with session() as db:
+            return accept_specialized(db, job_id, body.compressed)
+    except GateError as exc:
+        raise _fail(exc) from exc
 
 
 @app.get("/api/assets/{asset_id}/lock")

@@ -305,7 +305,7 @@ def assign_slot(session: Session, episode_id: str, *, asset_id: str, kind: str, 
                 "label": f"{kind}:{number}",
             },
         )
-    binding = character_slots(number) if kind == "角色" else {}
+    binding = character_slots(number) if kind in {"角色", "人物"} else {}
     return {"id": slot_id, "number": number, "binding": binding}
 
 
@@ -444,9 +444,9 @@ def image_version_snapshot(session: Session, segment_id: str) -> dict[str, str]:
             JOIN assets ON assets.id = slots.asset_id
             JOIN asset_versions ON asset_versions.asset_id = slots.asset_id
             WHERE slots.segment_id = :id
-              AND slots.kind IN ('角色', '场景', '道具')
+              AND slots.kind IN ('角色', '场景', '道具', '人物')
               AND slots.empty = 0
-              AND assets.kind IN ('角色', '场景', '道具')
+              AND assets.kind IN ('角色', '场景', '道具', '人物')
               AND asset_versions.accepted = 1
             """
         ),
@@ -460,6 +460,17 @@ def image_version_snapshot(session: Session, segment_id: str) -> dict[str, str]:
         if current is None or version > current[0]:
             chosen[asset_id] = (version, row["version_id"])
     return {asset_id: version_id for asset_id, (_, version_id) in chosen.items()}
+
+
+def _require_specialized(session: Session, segment_id: str) -> None:
+    from cvplatform.characters import specialized_ready
+
+    rows = session.execute(
+        text("SELECT id FROM character_refs WHERE segment_id = :id"),
+        {"id": segment_id},
+    ).all()
+    for row in rows:
+        specialized_ready(session, row[0])
 
 
 def latest_image_pin(session: Session, segment_id: str) -> str:
@@ -521,6 +532,7 @@ def submit_probe(session: Session, segment_id: str, *, resolution: str, mode: st
     first_frame_is_stale(session, segment_id)
     if current["g2"] != "passed":
         raise GateError("g2", "勾选 G2 在首帧入槽之后、探针之前")
+    _require_specialized(session, segment_id)
     reject_wrong_character_audio(audio_binding)
     saved = probe_spec(resolution, mode, duration, rules)
     session.execute(
@@ -642,7 +654,7 @@ def mark_qc(session: Session, segment_id: str, passed: bool) -> dict[str, Any]:
 def bump_image_version(session: Session, asset_id: str, segment_id: str) -> dict[str, Any]:
     """An image bump clears G2. The old 首帧 product stays until a new accepted frame replaces ref_image_0."""
     asset = session.execute(text("SELECT kind FROM assets WHERE id = :id"), {"id": asset_id}).mappings().first()
-    if asset is None or asset["kind"] not in {"角色", "场景", "道具"}:
+    if asset is None or asset["kind"] not in {"角色", "场景", "道具", "人物"}:
         raise GateError("version", "只升角色、场景或道具的图像版本才作废 G2")
     current = session.execute(
         text("SELECT COALESCE(MAX(version), 0) FROM asset_versions WHERE asset_id = :id"),
