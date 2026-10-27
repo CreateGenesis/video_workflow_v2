@@ -134,8 +134,8 @@ def complete(session: Session, job_id: str, owner: str, output: dict[str, Any] |
     if row is None:
         raise GateError("missing", "任务不存在")
     expires = _parse(row["lease_expires_at"])
-    if row["status"] != "leased" or row["lease_owner"] != owner or expires is None or expires <= now:
-        return row
+    if row["lease_owner"] != owner or row["status"] != "leased" or expires is None or expires <= now:
+        raise GateError("lease", "过期或越权的回写不改变该行")
     if output is not None and contains_secret(output):
         raise GateError("secret", "回写结果里出现密钥字段")
     status = "failed" if error else "succeeded"

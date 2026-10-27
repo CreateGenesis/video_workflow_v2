@@ -24,18 +24,39 @@ def test_expired_write_does_not_change_the_row(client):
         job = enqueue(db, workspace_id="ws", job_type="segment_script", payload={"script": "一"})
         claimed = claim(db, "a", credential="cred", now=datetime.now(timezone.utc) - timedelta(minutes=11))
         assert claimed["job"]["id"] == job["id"]
-        before = claimed["job"]["status"]
-        late = complete(
-            db,
-            job["id"],
-            "a",
-            {"table": []},
-            None,
-            now=datetime.now(timezone.utc),
-        )
-    assert before == "leased"
+        try:
+            complete(db, job["id"], "a", {"table": []}, None, now=datetime.now(timezone.utc))
+            raised = False
+        except Exception as exc:  # noqa: BLE001
+            raised = exc
+        from sqlalchemy import text
+
+        late = db.execute(text("SELECT status, output, lease_owner FROM jobs WHERE id = :id"), {"id": job["id"]}).mappings().one()
+    assert getattr(raised, "code", None) == "lease"
     assert late["status"] == "leased"
     assert late["output"] is None
+    assert late["lease_owner"] == "a"
+
+
+def test_stranger_complete_is_rejected_on_the_http_route(client):
+    created = client.post("/api/jobs", json={"workspace_id": "ws", "type": "write_prompt", "input": {"segment": 3}}).json()
+    claimed = client.post("/api/jobs/claim", params={"owner": "agent-1"}).json()
+    assert claimed["claimed"] is True
+    rejected = client.post(
+        f"/api/jobs/{created['id']}/complete",
+        json={"owner": "stranger", "output": {"hack": True}, "error": None},
+    )
+    assert rejected.status_code == 422
+    assert rejected.json()["detail"]["code"] == "lease"
+    listed = client.post("/api/jobs/claim", params={"owner": "other"}).json()
+    assert listed["claimed"] is False or listed["job"]["id"] != created["id"]
+    again = client.post(
+        f"/api/jobs/{created['id']}/complete",
+        json={"owner": "agent-1", "output": {"prompt": "kept"}, "error": None},
+    )
+    assert again.status_code == 200
+    assert again.json()["status"] == "succeeded"
+    assert again.json()["output"] == '{"prompt": "kept"}'
 
 
 def test_inspect_marks_lease_expired_when_attempts_are_used(client):
