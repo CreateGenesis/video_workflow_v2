@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { assertRunnableInputs, blockInspirationRun, verifyAccount } from "../src/lib/v3-actions.js";
+import { assertRunnableInputs, blockInspirationRun, MCP_EXAMPLE, verifyAccount, verifyMcpCard } from "../src/lib/v3-actions.js";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 
@@ -19,6 +19,22 @@ test("verify button posts the filled token and the example to the platform", asy
   assert.match(source, /data-testid="verify-button"/);
   assert.match(source, /onClick=\{onVerify\}/);
   assert.match(source, /verifyAccount\(token, post\)/);
+});
+
+test("mcp card posts the filled address and example, then the platform stores it", async () => {
+  const seen = [];
+  const result = await verifyMcpCard({ name: "资料检索", address: "http://127.0.0.1:3333/mcp" }, async (path, body) => {
+    seen.push({ path, body });
+    return { status: "可用", card: { status: "可用", address: body.address } };
+  });
+  assert.equal(seen[0].path, "/api/mcp/verify");
+  assert.equal(seen[0].body.address, "http://127.0.0.1:3333/mcp");
+  assert.equal(seen[0].body.example, MCP_EXAMPLE);
+  assert.equal(result.card.status, "可用");
+  const source = read("../src/pages/settings.jsx");
+  assert.match(source, /data-testid="mcp-verify-button"/);
+  assert.match(source, /verifyMcpCard\(\{ name, address, tools: \["search"\] \}, post\)/);
+  assert.match(source, /示例：\{MCP_EXAMPLE\}/);
 });
 
 test("a new run without a script stops before the old run endpoint", () => {

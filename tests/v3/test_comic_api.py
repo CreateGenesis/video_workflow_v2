@@ -25,7 +25,10 @@ def test_new_episode_creates_segment_script_and_does_not_copy(client):
     assert denied.json()["detail"]["code"] == "inspiration"
     created = client.post("/api/runs", json={"version_id": "wf_comic", "script": "第一场夜路"}).json()
     assert created["copied"] is False
-    assert created["job_id"].startswith("job_")
+    assert created["job_id"] is None
+    assert created["submitted"] is True
+    accepted = client.post(f"/api/episodes/{created['episode_id']}/accept-published").json()
+    assert accepted["job_id"].startswith("job_")
     missing = client.get("/api/comic/missing", params={"episode_id": created["episode_id"]}).json()
     assert missing["stopped_at"] == "是否对白"
     assert missing["local_h3"] is False
@@ -156,9 +159,19 @@ def test_probe_and_mcp_and_benchmark(client):
     assert judge_benchmark("segment_script", [{"number": 1, "duration": 5, "cast": [], "scene": "a", "action": "b", "dialogue": "无", "end_state": "c"}], visual=True) == "passed"
     account = client.post("/api/accounts/verify", json={"fields": {"token": ""}, "example": "ghp_example"}).json()
     assert account["status"] == "失败"
-    mcp = client.post("/api/mcp/verify", json={"address": "http://mcp", "tools": ["search"]}).json()
+    mcp = client.post(
+        "/api/mcp/verify",
+        json={"name": "资料检索", "address": "http://127.0.0.1:3333/mcp", "example": "http://127.0.0.1:3333/mcp", "tools": ["search"]},
+    ).json()
     assert mcp["status"] == "可用"
     assert mcp["tools"] == ["search"]
+    assert mcp["card"]["status"] == "可用"
+    assert mcp["card"]["example"] == "http://127.0.0.1:3333/mcp"
+    listed = client.get("/api/mcp/cards").json()
+    assert listed["items"][0]["address"] == "http://127.0.0.1:3333/mcp"
+    failed = client.post("/api/mcp/verify", json={"name": "资料检索", "address": "", "example": "http://127.0.0.1:3333/mcp"}).json()
+    assert failed["status"] == "失败"
+    assert client.get("/api/mcp/cards").json()["items"][0]["status"] == "失败"
     blocked = client.get("/api/segment-script/allowed", params={"needs_external": True, "mcp_status": "未验证"}).json()
     assert blocked["allowed"] is False
     free = client.get("/api/segment-script/allowed", params={"needs_external": False}).json()

@@ -45,6 +45,9 @@ def test_new_episode_reuses_numbers_and_does_not_copy_segments(client):
     episode = client.get(f"/api/episodes/{created['episode_id']}").json()
     assert episode["segments"] == []
     assert episode["numbers"] == [{"asset_id": "role-a", "kind": "角色", "number": 1}]
+    assert created["job_id"] is None
+    accepted = client.post(f"/api/episodes/{created['episode_id']}/accept-published").json()
+    assert accepted["created"] is True
     assert created["copied_segments"] == 0
     assert created["reallocated"] is False
     empty = client.post("/api/runs", json={"version_id": "wf_comic", "script": "   "})
@@ -151,6 +154,15 @@ def test_probe_rejects_empty_first_frame_wrong_audio_and_missing_seed(client):
         f"/api/episodes/{episode}/slots",
         json={"asset_id": "frame", "kind": "首帧", "number": 0, "segment_id": segment_id, "product_id": "frame-file"},
     )
+    before_g2 = client.post(
+        f"/api/segments/{segment_id}/probe",
+        params={"resolution": "480p", "mode": "高速", "duration": 2, "seed": "9"},
+    )
+    assert before_g2.status_code == 422
+    assert before_g2.json()["detail"]["code"] == "g2"
+    marked = client.post(f"/api/segments/{segment_id}/g2", params={"passed": True})
+    assert marked.status_code == 200
+    assert marked.json()["g2"] == "passed"
     opened = client.post(
         f"/api/segments/{segment_id}/probe",
         params={"resolution": "480p", "mode": "高速", "duration": 2, "seed": "9"},
@@ -179,6 +191,7 @@ def test_formal_submit_uses_only_the_latest_probe_check(client):
         f"/api/episodes/{episode}/slots",
         json={"asset_id": "frame", "kind": "首帧", "number": 0, "segment_id": segment_id, "product_id": "frame-file"},
     )
+    client.post(f"/api/segments/{segment_id}/g2", params={"passed": True})
     first = client.post(
         f"/api/segments/{segment_id}/probe",
         params={"resolution": "480p", "mode": "高速", "duration": 5, "seed": "7"},
@@ -204,8 +217,29 @@ def test_formal_submit_uses_only_the_latest_probe_check(client):
 
 
 def test_mark_failed_and_image_version_follow_the_table(client):
-    failed = client.get("/api/rerun", params={"change": "failed"}).json()
+    episode = client.post("/api/episodes").json()["id"]
+    saved = client.post(f"/api/episodes/{episode}/segments", json=[_segment()]).json()
+    segment_id = saved["items"][0]["id"]
+    client.post(
+        f"/api/episodes/{episode}/slots",
+        json={"asset_id": "frame", "kind": "首帧", "number": 0, "segment_id": segment_id, "product_id": "frame-file"},
+    )
+    client.post(f"/api/segments/{segment_id}/g2", params={"passed": True})
+    client.post(f"/api/segments/{segment_id}/qc", params={"passed": True})
+    with session() as db:
+        db.execute(
+            text("UPDATE episodes SET episode_duration = 10, aspect = '1080x1920', color_confirmed = 1, subtitles_confirmed = 1, music_confirmed = 1, loudness_confirmed = 1 WHERE id = :id"),
+            {"id": episode},
+        )
+    ready = client.post(f"/api/episodes/{episode}/concat")
+    assert ready.status_code == 200
+    client.post(f"/api/segments/{segment_id}/qc", params={"passed": False})
+    refused = client.post(f"/api/episodes/{episode}/concat")
+    assert refused.status_code == 422
+    assert refused.json()["detail"]["code"] == "g4"
+    failed = client.post(f"/api/segments/{segment_id}/rerun", params={"change": "failed"}).json()
     assert failed["invalidate"] == ["g3", "g4"]
+    assert failed["stored"]["g4"] == "pending"
     unchanged = client.get("/api/rerun", params={"change": "unchanged"}).json()
     assert unchanged["keeps_g3"] is False
     image = client.get("/api/rerun", params={"change": "image_version"}).json()
@@ -220,6 +254,22 @@ def test_mark_failed_and_image_version_follow_the_table(client):
     assert blocked.json()["detail"]["code"] == "last_frame"
     assert client.post("/api/segments/seg-next/next-probe", params={"last_frame_slotted": True}).json()["allowed"] is True
     last = client.get("/api/rerun", params={"change": "end_state", "has_next": False}).json()
+    with session() as db:
+        db.execute(text("INSERT INTO assets (id, workspace_id, name, kind, kept) VALUES ('role-can', 'ws', '红罐', '角色', 1)"))
+        db.execute(text("INSERT INTO asset_versions (id, asset_id, version, lock_text, accepted) VALUES ('ver-can-1', 'role-can', 1, '红罐', 1)"))
+        db.execute(
+            text("UPDATE slots SET asset_id = 'role-can', asset_version_id = 'ver-can-1' WHERE segment_id = :id AND kind = '首帧'"),
+            {"id": segment_id},
+        )
+    bumped = client.post("/api/assets/role-can/image-version", params={"segment_id": segment_id})
+    assert bumped.status_code == 200
+    assert bumped.json()["g2"] == "pending"
+    blocked_probe = client.post(
+        f"/api/segments/{segment_id}/probe",
+        params={"resolution": "480p", "mode": "高速", "duration": 2, "seed": "9"},
+    )
+    assert blocked_probe.status_code == 422
+    assert blocked_probe.json()["detail"]["code"] == "g2"
     assert "next_prompt" not in last["invalidate"]
 
 
@@ -295,6 +345,23 @@ def test_concat_price_g1_and_backfill(client):
     early = client.post("/api/backfill/export", params={"process_stopped": False})
     assert early.json()["detail"]["code"] == "backfill"
     assert client.post("/api/backfill/export", params={"process_stopped": True}).json()["allowed"] is True
+    with session() as db:
+        db.execute(text("INSERT INTO assets (id, workspace_id, name, kind, kept) VALUES ('kick-red', 'ws', 'kick-red', '主体', 1)"))
+        db.execute(text("INSERT INTO assets (id, workspace_id, name, kind, kept) VALUES ('ref-unused', 'ws', 'unused', 'Reference', 1)"))
+    stopped = client.post(
+        "/api/backfill/run",
+        params={"process_stopped": False},
+        json={"work_id": "work_1adb1aed6c084c3e", "entity_ids": ["kick-red", "ref-unused"]},
+    )
+    assert stopped.status_code == 422
+    ran = client.post(
+        "/api/backfill/run",
+        params={"process_stopped": True},
+        json={"work_id": "work_1adb1aed6c084c3e", "entity_ids": ["kick-red", "ref-unused"]},
+    ).json()
+    assert "kick-red" in ran["kept"]
+    assert "ref-unused" in ran["removed"]
+    assert any(item["name"].startswith("kick-") for item in ran["library"])
     assert backfill_decision(task_input=False, clip_chain=False, asset_link=False, promoted=True) == "keep"
     assert backfill_decision(task_input=False, clip_chain=False, asset_link=False, promoted=False) == "soft_delete"
 

@@ -156,7 +156,8 @@ SCHEMA_SQLITE = [
       loudness TEXT,
       loudness_confirmed INTEGER NOT NULL DEFAULT 0,
       g1 TEXT NOT NULL DEFAULT 'pending',
-      published INTEGER NOT NULL DEFAULT 0
+      published INTEGER NOT NULL DEFAULT 0,
+      work_id TEXT
     )
     """,
     """

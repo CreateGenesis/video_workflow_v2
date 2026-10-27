@@ -10,7 +10,13 @@ from sqlalchemy import text
 from pydantic import BaseModel, Field
 
 from cvplatform.comic import (
+    accept_published,
     apply_change,
+    bump_image_version,
+    run_backfill,
+    concat_episode,
+    mark_g2,
+    mark_qc,
     assign_slot,
     build_formal,
     check_g3,
@@ -344,6 +350,15 @@ def post_promote(product_id: str, body: PromoteIn, role: str = "platform") -> di
         raise _fail(exc) from exc
 
 
+@app.post("/api/episodes/{episode_id}/accept-published")
+def post_accept_published(episode_id: str) -> dict[str, Any]:
+    try:
+        with session() as db:
+            return accept_published(db, episode_id)
+    except GateError as exc:
+        raise _fail(exc) from exc
+
+
 @app.post("/api/runs")
 def post_run(body: PublishIn) -> dict[str, Any]:
     if body.inspiration and not body.script:
@@ -377,6 +392,33 @@ def missing(episode_id: str) -> dict[str, Any]:
         "missing": gaps,
         "local_h3": False,
     }
+
+
+@app.post("/api/segments/{segment_id}/g2")
+def post_g2(segment_id: str, passed: bool = True) -> dict[str, Any]:
+    try:
+        with session() as db:
+            return mark_g2(db, segment_id, passed)
+    except GateError as exc:
+        raise _fail(exc) from exc
+
+
+@app.post("/api/segments/{segment_id}/qc")
+def post_qc(segment_id: str, passed: bool = True) -> dict[str, Any]:
+    try:
+        with session() as db:
+            return mark_qc(db, segment_id, passed)
+    except GateError as exc:
+        raise _fail(exc) from exc
+
+
+@app.post("/api/assets/{asset_id}/image-version")
+def post_image_version(asset_id: str, segment_id: str) -> dict[str, Any]:
+    try:
+        with session() as db:
+            return bump_image_version(db, asset_id, segment_id)
+    except GateError as exc:
+        raise _fail(exc) from exc
 
 
 @app.post("/api/segments/{segment_id}/probe")
@@ -428,8 +470,19 @@ def post_formal(segment_id: str) -> dict[str, Any]:
 
 @app.get("/api/rerun")
 def get_rerun(change: str, has_next: bool = False) -> dict[str, Any]:
+    from cvplatform.gates import mark_failed, rerun
+
     try:
-        return apply_change(change, has_next=has_next)
+        return mark_failed() if change == "failed" else rerun(change, has_next=has_next)
+    except GateError as exc:
+        raise _fail(exc) from exc
+
+
+@app.post("/api/segments/{segment_id}/rerun")
+def post_rerun(segment_id: str, change: str, has_next: bool = False) -> dict[str, Any]:
+    try:
+        with session() as db:
+            return apply_change(db, segment_id, change, has_next=has_next)
     except GateError as exc:
         raise _fail(exc) from exc
 
@@ -476,9 +529,51 @@ def post_account(body: AccountIn) -> dict[str, Any]:
 
 
 class McpIn(BaseModel):
+    name: str = "外部 MCP"
     address: str
+    example: str = ""
+    enabled: bool = True
     tools: list[str] = Field(default_factory=list)
     fail: str = ""
+
+
+def save_mcp_card(db, body: McpIn, result: dict[str, Any]) -> dict[str, Any]:
+    card_id = "mcp_" + body.name
+    db.execute(
+        text(
+            """
+            INSERT INTO mcp_cards (id, workspace_id, name, transport, address, enabled, status, example, last_error, verified_at)
+            VALUES (:id, 'ws', :name, :transport, :address, :enabled, :status, :example, :error, :verified_at)
+            ON CONFLICT(id) DO UPDATE SET
+              address = excluded.address,
+              enabled = excluded.enabled,
+              status = excluded.status,
+              example = excluded.example,
+              last_error = excluded.last_error,
+              verified_at = excluded.verified_at
+            """
+        ),
+        {
+            "id": card_id,
+            "name": body.name,
+            "transport": "stdio" if body.address.startswith("stdio:") else "http",
+            "address": body.address,
+            "enabled": 1 if body.enabled else 0,
+            "status": result["status"],
+            "example": body.example,
+            "error": result.get("error") or "",
+            "verified_at": "now" if result["status"] == "可用" else None,
+        },
+    )
+    row = db.execute(text("SELECT * FROM mcp_cards WHERE id = :id"), {"id": card_id}).mappings().one()
+    return dict(row)
+
+
+@app.get("/api/mcp/cards")
+def get_mcp_cards() -> dict[str, Any]:
+    with session() as db:
+        rows = db.execute(text("SELECT id, name, address, example, status, enabled FROM mcp_cards ORDER BY name")).mappings().all()
+    return {"items": [dict(row) for row in rows]}
 
 
 @app.post("/api/mcp/verify")
@@ -488,7 +583,10 @@ def post_mcp(body: McpIn) -> dict[str, Any]:
             raise RuntimeError(body.fail)
         return body.tools
 
-    return verify_mcp({"address": body.address}, handshake=handshake)
+    result = verify_mcp({"address": body.address}, handshake=handshake)
+    with session() as db:
+        stored = save_mcp_card(db, body, result)
+    return {**result, "card": stored}
 
 
 @app.get("/api/segment-script/allowed")
@@ -558,6 +656,15 @@ def post_concat(body: ConcatIn) -> dict[str, Any]:
         raise _fail(exc) from exc
 
 
+@app.post("/api/episodes/{episode_id}/concat")
+def post_episode_concat(episode_id: str) -> dict[str, Any]:
+    try:
+        with session() as db:
+            return concat_episode(db, episode_id)
+    except GateError as exc:
+        raise _fail(exc) from exc
+
+
 @app.post("/api/estimate")
 def post_estimate(kind: str, unit_price: float | None = None, quantity: float = 1) -> dict[str, float]:
     try:
@@ -574,6 +681,21 @@ def post_next_probe(segment_id: str, last_frame_slotted: bool) -> dict[str, Any]
     except GateError as exc:
         raise _fail(exc) from exc
     return {"segment_id": segment_id, "allowed": True}
+
+
+class BackfillIn(BaseModel):
+    work_id: str
+    entity_ids: list[str]
+
+
+@app.post("/api/backfill/run")
+def post_backfill(body: BackfillIn, process_stopped: bool = False) -> dict[str, Any]:
+    try:
+        may_export_ids(process_stopped)
+        with session() as db:
+            return run_backfill(db, body.work_id, body.entity_ids)
+    except GateError as exc:
+        raise _fail(exc) from exc
 
 
 @app.post("/api/backfill/export")

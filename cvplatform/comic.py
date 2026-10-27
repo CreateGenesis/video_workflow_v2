@@ -13,6 +13,7 @@ from cvplatform.gates import (
     GateError,
     character_slots,
     check_ratios,
+    concat_ready,
     confirm_segment,
     copy_probe_fields,
     formal_submit_body,
@@ -318,7 +319,6 @@ def start_published(session: Session, version_id: str, script: str) -> dict[str,
     session.execute(text("UPDATE episodes SET script = :script WHERE id = :id"), {"script": script, "id": episode_id})
     from cvplatform.jobs import enqueue
 
-    job = enqueue(session, workspace_id="ws", job_type="segment_script", payload={"script": script, "episode_id": episode_id})
     pinned = _loads(version["pinned_json"], {})
     for item in pinned.get("number_map") or []:
         session.execute(
@@ -336,11 +336,48 @@ def start_published(session: Session, version_id: str, script: str) -> dict[str,
                 "number": item["number"],
             },
         )
-    return {"episode_id": episode_id, "job_id": job["id"], "copied_segments": 0, "copied": False, "reallocated": False}
+    return {
+        "episode_id": episode_id,
+        "job_id": None,
+        "submitted": True,
+        "copied_segments": 0,
+        "copied": False,
+        "reallocated": False,
+    }
+
+
+def accept_published(session: Session, episode_id: str) -> dict[str, Any]:
+    """The published episode creates segment_script only after the submitted version is accepted."""
+    episode = episode_row(session, episode_id)
+    if not str(episode.get("script") or "").strip():
+        raise GateError("script", "没有剧本就不创建这条任务")
+    if not episode.get("workflow_version_id"):
+        raise GateError("workflow", "只有提交过的发布版才创建分段任务")
+    existing = session.execute(
+        text("SELECT id FROM jobs WHERE type = 'segment_script' AND input LIKE :needle"),
+        {"needle": f"%{episode_id}%"},
+    ).first()
+    if existing:
+        return {"episode_id": episode_id, "job_id": existing[0], "created": False}
+    from cvplatform.jobs import enqueue
+
+    job = enqueue(
+        session,
+        workspace_id=episode["workspace_id"],
+        job_type="segment_script",
+        payload={"script": episode["script"], "episode_id": episode_id},
+    )
+    return {"episode_id": episode_id, "job_id": job["id"], "created": True}
 
 
 def accept_segment_script(session: Session, episode_id: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     episode = episode_row(session, episode_id)
+    pending = session.execute(
+        text("SELECT id, status FROM jobs WHERE type = 'segment_script' AND input LIKE :needle"),
+        {"needle": f"%{episode_id}%"},
+    ).mappings().first()
+    if pending is None or pending["status"] != "succeeded":
+        raise GateError("accept", "分段任务被接受后才保存分段表")
     return save_segments(session, episode_id, rows, episode.get("dialogue_mode"))
 
 
@@ -360,8 +397,23 @@ def submit_probe(session: Session, segment_id: str, *, resolution: str, mode: st
     ).mappings().first()
     if first is None or first["empty"] or not first["product_id"]:
         raise GateError("slot", "ref_image_0 为空不能探针")
+    if current["g2"] != "passed":
+        raise GateError("g2", "勾选 G2 在首帧入槽之后、探针之前")
     stale = session.execute(
-        text("SELECT id FROM slots WHERE segment_id = :id AND kind = '首帧' AND asset_version_id = 'stale'"),
+        text(
+            """
+            SELECT slots.id
+            FROM slots
+            JOIN asset_versions ON asset_versions.id = slots.asset_version_id
+            JOIN assets ON assets.id = slots.asset_id
+            WHERE slots.segment_id = :id
+              AND slots.kind = '首帧'
+              AND assets.kind IN ('角色', '场景', '道具')
+              AND asset_versions.version < (
+                SELECT MAX(version) FROM asset_versions newer WHERE newer.asset_id = slots.asset_id
+              )
+            """
+        ),
         {"id": segment_id},
     ).first()
     old_first_frame_blocks(stale is not None)
@@ -456,10 +508,72 @@ def build_formal(session: Session, segment_id: str) -> dict[str, Any]:
     return body
 
 
-def apply_change(change: str, *, has_next: bool = False) -> dict[str, Any]:
-    if change == "failed":
-        return mark_failed()
-    return rerun(change, has_next=has_next)
+def mark_g2(session: Session, segment_id: str, passed: bool) -> dict[str, Any]:
+    current = session.execute(text("SELECT id FROM segments WHERE id = :id"), {"id": segment_id}).first()
+    if current is None:
+        raise GateError("missing", "没有这一段")
+    first = session.execute(
+        text("SELECT id FROM slots WHERE segment_id = :id AND kind = '首帧' AND empty = 0 AND product_id IS NOT NULL"),
+        {"id": segment_id},
+    ).first()
+    if first is None:
+        raise GateError("slot", "勾选 G2 在首帧入槽之后")
+    value = "passed" if passed else "pending"
+    session.execute(text("UPDATE segments SET g2 = :g2 WHERE id = :id"), {"g2": value, "id": segment_id})
+    return {"id": segment_id, "g2": value}
+
+
+def mark_qc(session: Session, segment_id: str, passed: bool) -> dict[str, Any]:
+    """G4 is written by the QC command. Concat reads this stored column."""
+    current = session.execute(text("SELECT id FROM segments WHERE id = :id"), {"id": segment_id}).first()
+    if current is None:
+        raise GateError("missing", "没有这一段")
+    value = "passed" if passed else "pending"
+    session.execute(text("UPDATE segments SET g4 = :g4 WHERE id = :id"), {"g4": value, "id": segment_id})
+    return {"id": segment_id, "g4": value}
+
+
+def bump_image_version(session: Session, asset_id: str, segment_id: str) -> dict[str, Any]:
+    """A character, scene, or prop image bump clears G2. The old first frame stays slotted."""
+    asset = session.execute(text("SELECT kind FROM assets WHERE id = :id"), {"id": asset_id}).mappings().first()
+    if asset is None or asset["kind"] not in {"角色", "场景", "道具"}:
+        raise GateError("version", "只升角色、场景或道具的图像版本才作废 G2")
+    current = session.execute(
+        text("SELECT COALESCE(MAX(version), 0) FROM asset_versions WHERE asset_id = :id"),
+        {"id": asset_id},
+    ).first()
+    version = int(current[0]) + 1
+    version_id = "ver_" + uuid.uuid4().hex[:8]
+    session.execute(
+        text("INSERT INTO asset_versions (id, asset_id, version, lock_text, accepted) VALUES (:id, :asset_id, :version, '', 1)"),
+        {"id": version_id, "asset_id": asset_id, "version": version},
+    )
+    session.execute(text("UPDATE segments SET g2 = 'pending', g4 = 'pending' WHERE id = :id"), {"id": segment_id})
+    return {"asset_id": asset_id, "version": version, "g2": "pending"}
+
+
+def concat_episode(session: Session, episode_id: str) -> dict[str, Any]:
+    episode = episode_row(session, episode_id)
+    rows = session.execute(
+        text("SELECT number, duration, g4 FROM segments WHERE episode_id = :id ORDER BY number"),
+        {"id": episode_id},
+    ).mappings().all()
+    if not rows:
+        raise GateError("g4", "每段 G4 都通过后才拼接")
+    return concat_ready([dict(row) for row in rows], episode)
+
+
+def apply_change(session: Session, segment_id: str, change: str, *, has_next: bool = False) -> dict[str, Any]:
+    plan = mark_failed() if change == "failed" else rerun(change, has_next=has_next)
+    if "g3" in plan.get("invalidate", []):
+        session.execute(text("UPDATE probe_results SET g3 = 'pending', superseded = 1 WHERE segment_id = :id"), {"id": segment_id})
+    if "g4" in plan.get("invalidate", []):
+        session.execute(text("UPDATE segments SET g4 = 'pending' WHERE id = :id"), {"id": segment_id})
+    if "g2" in plan.get("invalidate", []):
+        session.execute(text("UPDATE segments SET g2 = 'pending' WHERE id = :id"), {"id": segment_id})
+    stored = session.execute(text("SELECT g2, g4 FROM segments WHERE id = :id"), {"id": segment_id}).mappings().first()
+    plan["stored"] = dict(stored) if stored else {}
+    return plan
 
 
 def prompt_errors(full_text: str, slots: list[dict[str, Any]], sections: dict[str, str], duration: float) -> list[str]:
@@ -507,3 +621,25 @@ def promote(session: Session, product_id: str, kind: str, lock_text: str) -> dic
 
 def backfill_decision(*, task_input: bool, clip_chain: bool, asset_link: bool, promoted: bool) -> str:
     return "keep" if used_keep(task_input, clip_chain, asset_link, promoted) else "soft_delete"
+
+
+def run_backfill(session: Session, work_id: str, entity_ids: list[str]) -> dict[str, Any]:
+    """Soft-delete listed references on one work. A promoted asset stays in the library."""
+    kept = []
+    removed = []
+    for entity_id in entity_ids:
+        asset = session.execute(text("SELECT * FROM assets WHERE id = :id"), {"id": entity_id}).mappings().first()
+        promoted = asset is not None and bool(asset["kept"]) and asset["kind"] != "Reference"
+        decision = backfill_decision(task_input=False, clip_chain=False, asset_link=False, promoted=promoted)
+        if decision == "keep":
+            kept.append(entity_id)
+            continue
+        session.execute(
+            text("UPDATE assets SET kept = 0 WHERE id = :id AND kind = 'Reference'"),
+            {"id": entity_id},
+        )
+        removed.append(entity_id)
+    library = session.execute(
+        text("SELECT id, name FROM assets WHERE kept = 1 AND kind != 'Reference' ORDER BY name"),
+    ).mappings().all()
+    return {"kept": kept, "removed": removed, "library": [dict(row) for row in library]}
