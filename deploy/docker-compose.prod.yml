@@ -1,0 +1,77 @@
+# Production on the application host. nginx keeps proxying https://video.createsis.cn to 127.0.0.1:8091.
+# This file starts only the v3 platform and agent. It uses its own PostgreSQL database, cvgen_v3.
+# The retired v2 stack and its database stay on disk and are not started by this file.
+services:
+  postgres:
+    image: postgres:18-bookworm
+    environment:
+      POSTGRES_USER: cvgen
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: cvgen_v3
+    volumes:
+      - platform_postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cvgen -d cvgen_v3"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  platform-api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.platform
+      args:
+        APT_MIRROR: ${APT_MIRROR:-http://mirrors.cloud.tencent.com/debian}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.cloud.tencent.com/pypi/simple}
+        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-mirrors.cloud.tencent.com}
+        NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-https://mirrors.cloud.tencent.com/npm/}
+    image: cvgen-platform:v3
+    command: ["python", "-m", "cvplatform"]
+    ports:
+      - "127.0.0.1:8091:8093"
+    environment:
+      CVGEN_PLATFORM_PORT: "8093"
+      CVGEN_PLATFORM_HOST: "0.0.0.0"
+      CVGEN_PLATFORM_DATABASE_URL: postgresql+psycopg://cvgen:${POSTGRES_PASSWORD}@postgres:5432/cvgen_v3
+      CVGEN_WEB_DIST: /app/web/dist
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8093/api/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+
+  agent-worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.agent
+      args:
+        APT_MIRROR: ${APT_MIRROR:-http://mirrors.cloud.tencent.com/debian}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.cloud.tencent.com/pypi/simple}
+        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-mirrors.cloud.tencent.com}
+    image: cvgen-agent:v3
+    command: ["python", "-m", "agent"]
+    ports:
+      - "127.0.0.1:8094:8094"
+    environment:
+      CVGEN_AGENT_PORT: "8094"
+      CVGEN_AGENT_HOST: "0.0.0.0"
+      CVGEN_PLATFORM_URL: http://platform-api:8093
+    depends_on:
+      platform-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8094/api/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  platform_postgres:

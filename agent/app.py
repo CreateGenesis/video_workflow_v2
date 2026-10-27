@@ -188,7 +188,7 @@ def main() -> None:
 
     port = int(os.environ.get("CVGEN_AGENT_PORT", "8094"))
     host = os.environ.get("CVGEN_AGENT_HOST", "127.0.0.1")
-    uvicorn.run("agent.app:app", host=host, port=port, reload=False)
+    uvicorn.run("agent.app:app", host=host, port=port, reload=False, proxy_headers=True, forwarded_allow_ips="*")
 
 
 if __name__ == "__main__":

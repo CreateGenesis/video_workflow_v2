@@ -932,7 +932,7 @@ def main() -> None:
 
     port = int(os.environ.get("CVGEN_PLATFORM_PORT", "8093"))
     host = os.environ.get("CVGEN_PLATFORM_HOST", "127.0.0.1")
-    uvicorn.run("cvplatform.app:app", host=host, port=port, reload=False)
+    uvicorn.run("cvplatform.app:app", host=host, port=port, reload=False, proxy_headers=True, forwarded_allow_ips="*")
 
 
 if __name__ == "__main__":
