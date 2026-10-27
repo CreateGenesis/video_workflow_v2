@@ -12,6 +12,7 @@ import { EmptyState, ErrorState, InlineError, KeyValues, Money, Notice, PageHead
 import { EstimateTable } from "@/components/compile-result";
 import { SchemaForm, initialValues, toInputs, validate } from "@/components/schema-form";
 import { api, qs } from "@/lib/api";
+import { assertRunnableInputs, blockInspirationRun } from "@/lib/v3-actions";
 import { useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
 
@@ -114,7 +115,9 @@ function RunForm({ workflow }) {
 
   const submit = useMutation({
     mutationFn: () => {
-      const inputs = (batch ? rows : rows.slice(0, 1)).map((values) => toInputs(schema, values));
+      const selected = batch ? rows : rows.slice(0, 1);
+      assertRunnableInputs(selected);
+      const inputs = selected.map((values) => toInputs(schema, values));
       const common = { workflow_id: workflow.id, version, priority: Number(priority), auto_gates: autoGates };
       return batch && inputs.length > 1 ? api.post("/api/batches", { ...common, inputs }) : api.post("/api/runs", { ...common, inputs: inputs[0] });
     },
@@ -146,6 +149,11 @@ function RunForm({ workflow }) {
 
   const start = async () => {
     if (!check()) return;
+    const gate = blockInspirationRun(active[0]);
+    if (gate.blocked) {
+      toast.error(gate.message, "这一版只接受带剧本的九步漫剧工作流");
+      return;
+    }
     let results = estimate && estimate.length === active.length ? estimate : null;
     if (hasFixtures && !results) {
       try {

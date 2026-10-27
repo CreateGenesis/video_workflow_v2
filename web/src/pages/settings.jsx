@@ -1,6 +1,9 @@
+import { useState } from "react";
 import { useSearchParams } from "react-router";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeader, useDocumentTitle } from "@/components/common";
+import { api } from "@/lib/api";
+import { ACCOUNT_EXAMPLE, verifyAccount } from "@/lib/v3-actions";
 import { useSession } from "@/lib/session";
 import ProvidersTab from "@/pages/settings/providers";
 import PoolsTab from "@/pages/settings/pools";
@@ -22,18 +25,28 @@ const TABS = [
   { value: "account", label: "我的账号", Component: AccountTab },
 ];
 
-function AccountVerifyCard() {
+export function AccountVerifyCard({ post = api.post }) {
+  const [token, setToken] = useState("");
+  const [result, setResult] = useState(null);
+  const onVerify = async () => {
+    try {
+      setResult(await verifyAccount(token, post));
+    } catch (error) {
+      setResult({ status: "失败", error: error.message, next: "对照示例检查密钥和地址" });
+    }
+  };
   return (
-    <form className="mb-4 rounded-md border border-[#303030] p-3" data-testid="account-verify">
+    <form className="mb-4 rounded-md border border-[#303030] p-3" data-testid="account-verify" onSubmit={(event) => event.preventDefault()}>
       <p className="text-sm font-medium">账号验证</p>
       <label className="mt-2 block text-xs text-[#aaa]" htmlFor="account-token">
         填写
-        <input id="account-token" name="token" type="password" className="mt-1 w-full rounded border border-[#444] bg-transparent px-2 py-1" autoComplete="off" />
+        <input id="account-token" name="token" type="password" value={token} onChange={(event) => setToken(event.target.value)} className="mt-1 w-full rounded border border-[#444] bg-transparent px-2 py-1" autoComplete="off" />
       </label>
-      <p className="mt-2 text-xs text-[#888]">示例：ghp_ 加说明，不放真实值。从令牌页面复制。</p>
-      <button type="button" className="mt-2 rounded bg-[#0b8ce9] px-3 py-1 text-sm text-white" data-testid="verify-button">
+      <p className="mt-2 text-xs text-[#888]">示例：{ACCOUNT_EXAMPLE}</p>
+      <button type="button" className="mt-2 rounded bg-[#0b8ce9] px-3 py-1 text-sm text-white" data-testid="verify-button" onClick={onVerify}>
         验证
       </button>
+      {result ? <p data-testid="verify-result">{result.status}{result.error ? `：${result.error}` : ""}{result.next ? `。下一步：${result.next}` : ""}</p> : null}
     </form>
   );
 }
