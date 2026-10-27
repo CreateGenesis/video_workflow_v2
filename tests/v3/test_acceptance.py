@@ -257,27 +257,37 @@ def test_mark_failed_and_image_version_follow_the_table(client):
     with session() as db:
         db.execute(text("INSERT INTO assets (id, workspace_id, name, kind, kept) VALUES ('role-can', 'ws', '红罐', '角色', 1)"))
         db.execute(text("INSERT INTO asset_versions (id, asset_id, version, lock_text, accepted) VALUES ('ver-can-1', 'role-can', 1, '红罐', 1)"))
+        db.execute(text("INSERT INTO assets (id, workspace_id, name, kind, kept) VALUES ('prop-can', 'ws', '滑板', '道具', 1)"))
+        db.execute(text("INSERT INTO asset_versions (id, asset_id, version, lock_text, accepted) VALUES ('ver-prop-9', 'prop-can', 9, '滑板', 1)"))
     role = client.post(
         f"/api/episodes/{episode}/slots",
         json={"asset_id": "role-can", "kind": "角色", "number": 1, "segment_id": segment_id, "product_id": "role-file"},
     )
     assert role.status_code == 200
+    prop = client.post(
+        f"/api/episodes/{episode}/slots",
+        json={"asset_id": "prop-can", "kind": "道具", "number": 3, "segment_id": segment_id, "product_id": "prop-file"},
+    )
+    assert prop.status_code == 200
+    refreshed = client.post(
+        f"/api/episodes/{episode}/slots",
+        json={"asset_id": "frame", "kind": "首帧", "number": 0, "segment_id": segment_id, "product_id": "frame-file-pinned"},
+    )
+    assert refreshed.status_code == 200
     with session() as db:
         frame = db.execute(
             text("SELECT kind, asset_id, product_id, asset_version_id FROM slots WHERE segment_id = :id AND kind = '首帧'"),
             {"id": segment_id},
         ).mappings().one()
-        db.execute(
-            text("UPDATE slots SET asset_version_id = 'ver-can-1' WHERE segment_id = :id AND kind = '首帧'"),
-            {"id": segment_id},
-        )
     assert frame["kind"] == "首帧"
     assert frame["asset_id"] == "frame"
-    assert frame["product_id"] == "frame-file"
+    assert frame["product_id"] == "frame-file-pinned"
+    client.post(f"/api/segments/{segment_id}/g2", params={"passed": True})
     bumped = client.post("/api/assets/role-can/image-version", params={"segment_id": segment_id})
     assert bumped.status_code == 200
     assert bumped.json()["version"] == 2
     assert bumped.json()["g2"] == "pending"
+    assert int(bumped.json()["version"]) < 9
     rechecked = client.post(f"/api/segments/{segment_id}/g2", params={"passed": True})
     assert rechecked.status_code == 422
     assert rechecked.json()["detail"]["code"] == "first_frame"
@@ -293,7 +303,18 @@ def test_mark_failed_and_image_version_follow_the_table(client):
         ).mappings().one()
     assert still["kind"] == "首帧"
     assert still["asset_id"] == "frame"
-    assert still["product_id"] == "frame-file"
+    assert still["product_id"] == "frame-file-pinned"
+    prop_bump = client.post("/api/assets/prop-can/image-version", params={"segment_id": segment_id})
+    assert prop_bump.status_code == 200
+    assert prop_bump.json()["version"] == 10
+    prop_g2 = client.post(f"/api/segments/{segment_id}/g2", params={"passed": True})
+    assert prop_g2.status_code == 422
+    assert prop_g2.json()["detail"]["code"] == "first_frame"
+    prop_probe = client.post(
+        f"/api/segments/{segment_id}/probe",
+        params={"resolution": "480p", "mode": "高速", "duration": 2, "seed": "9"},
+    )
+    assert prop_probe.status_code == 422
     replaced = client.post(
         f"/api/episodes/{episode}/slots",
         json={"asset_id": "frame", "kind": "首帧", "number": 0, "segment_id": segment_id, "product_id": "frame-file-v2"},
@@ -308,6 +329,59 @@ def test_mark_failed_and_image_version_follow_the_table(client):
     )
     assert opened.status_code == 200
     assert "next_prompt" not in last["invalidate"]
+
+
+def test_lower_prop_bump_blocks_while_a_higher_character_version_exists(client):
+    episode = client.post("/api/episodes").json()["id"]
+    segment_id = client.post(f"/api/episodes/{episode}/segments", json=[_segment()]).json()["items"][0]["id"]
+    with session() as db:
+        db.execute(text("INSERT INTO assets (id, workspace_id, name, kind, kept) VALUES ('role-high', 'ws', '高版角色', '角色', 1)"))
+        db.execute(text("INSERT INTO asset_versions (id, asset_id, version, lock_text, accepted) VALUES ('ver-role-9', 'role-high', 9, '高', 1)"))
+        db.execute(text("INSERT INTO assets (id, workspace_id, name, kind, kept) VALUES ('prop-low', 'ws', '低版道具', '道具', 1)"))
+        db.execute(text("INSERT INTO asset_versions (id, asset_id, version, lock_text, accepted) VALUES ('ver-prop-1', 'prop-low', 1, '低', 1)"))
+    assert client.post(
+        f"/api/episodes/{episode}/slots",
+        json={"asset_id": "role-high", "kind": "角色", "number": 1, "segment_id": segment_id, "product_id": "role-high-file"},
+    ).status_code == 200
+    assert client.post(
+        f"/api/episodes/{episode}/slots",
+        json={"asset_id": "prop-low", "kind": "道具", "number": 4, "segment_id": segment_id, "product_id": "prop-low-file"},
+    ).status_code == 200
+    assert client.post(
+        f"/api/episodes/{episode}/slots",
+        json={"asset_id": "frame-low", "kind": "首帧", "number": 0, "segment_id": segment_id, "product_id": "frame-file"},
+    ).status_code == 200
+    bumped = client.post("/api/assets/prop-low/image-version", params={"segment_id": segment_id})
+    assert bumped.status_code == 200
+    assert bumped.json()["version"] == 2
+    assert bumped.json()["version"] < 9
+    rechecked = client.post(f"/api/segments/{segment_id}/g2", params={"passed": True})
+    assert rechecked.status_code == 422
+    assert rechecked.json()["detail"]["code"] == "first_frame"
+    probe = client.post(
+        f"/api/segments/{segment_id}/probe",
+        params={"resolution": "480p", "mode": "高速", "duration": 2, "seed": "3"},
+    )
+    assert probe.status_code == 422
+    assert probe.json()["detail"]["code"] == "first_frame"
+    with session() as db:
+        still = db.execute(
+            text("SELECT kind, product_id FROM slots WHERE segment_id = :id AND kind = '首帧'"),
+            {"id": segment_id},
+        ).mappings().one()
+    assert still["kind"] == "首帧"
+    assert still["product_id"] == "frame-file"
+    replaced = client.post(
+        f"/api/episodes/{episode}/slots",
+        json={"asset_id": "frame-low", "kind": "首帧", "number": 0, "segment_id": segment_id, "product_id": "frame-file-new"},
+    )
+    assert replaced.status_code == 200
+    assert client.post(f"/api/segments/{segment_id}/g2", params={"passed": True}).status_code == 200
+    opened = client.post(
+        f"/api/segments/{segment_id}/probe",
+        params={"resolution": "480p", "mode": "高速", "duration": 2, "seed": "3"},
+    )
+    assert opened.status_code == 200
 
 
 def test_prompt_validation_sentences(client):

@@ -434,28 +434,53 @@ def replace_first_frame(
     return {"id": current["id"], "number": 0, "binding": {}, "product_id": product_id, "replaced": True}
 
 
-def latest_image_pin(session: Session, segment_id: str) -> str | None:
-    """Highest accepted image version among this segment's character, scene, and prop slots."""
-    row = session.execute(
+def image_version_snapshot(session: Session, segment_id: str) -> dict[str, str]:
+    """Latest accepted version of each slotted character, scene, and prop. Versions are not compared across assets."""
+    rows = session.execute(
         text(
             """
-            SELECT asset_versions.id
+            SELECT slots.asset_id, asset_versions.id AS version_id, asset_versions.version
             FROM slots
             JOIN assets ON assets.id = slots.asset_id
-            JOIN asset_versions ON asset_versions.asset_id = assets.id
+            JOIN asset_versions ON asset_versions.asset_id = slots.asset_id
             WHERE slots.segment_id = :id
               AND slots.kind IN ('角色', '场景', '道具')
+              AND slots.empty = 0
+              AND assets.kind IN ('角色', '场景', '道具')
               AND asset_versions.accepted = 1
-            ORDER BY asset_versions.version DESC, asset_versions.id DESC
             """
         ),
         {"id": segment_id},
-    ).first()
-    return None if row is None else row[0]
+    ).mappings().all()
+    chosen: dict[str, tuple[int, str]] = {}
+    for row in rows:
+        asset_id = row["asset_id"]
+        version = int(row["version"])
+        current = chosen.get(asset_id)
+        if current is None or version > current[0]:
+            chosen[asset_id] = (version, row["version_id"])
+    return {asset_id: version_id for asset_id, (_, version_id) in chosen.items()}
+
+
+def latest_image_pin(session: Session, segment_id: str) -> str:
+    """Pin every slotted image asset to its own latest accepted version."""
+    return json.dumps(image_version_snapshot(session, segment_id), ensure_ascii=False, sort_keys=True)
+
+
+def _pinned_versions(raw: str | None) -> dict[str, str]:
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {str(key): str(value) for key, value in parsed.items()}
 
 
 def first_frame_is_stale(session: Session, segment_id: str) -> bool:
-    """A real 首帧 slot stays kind=首帧. Its pinned image version is compared with the latest character, scene, or prop version."""
+    """A real 首帧 slot stays kind=首帧. Each slotted image asset is compared with its own pinned version."""
     from cvplatform.gates import old_first_frame_blocks
 
     first = session.execute(
@@ -470,9 +495,9 @@ def first_frame_is_stale(session: Session, segment_id: str) -> bool:
     ).mappings().first()
     if first is None:
         return False
-    current_pin = latest_image_pin(session, segment_id)
-    pinned = first["asset_version_id"]
-    stale = current_pin is not None and pinned != current_pin
+    current = image_version_snapshot(session, segment_id)
+    pinned = _pinned_versions(first["asset_version_id"])
+    stale = any(pinned.get(asset_id) != version_id for asset_id, version_id in current.items())
     old_first_frame_blocks(stale)
     return stale
 
@@ -493,9 +518,9 @@ def submit_probe(session: Session, segment_id: str, *, resolution: str, mode: st
     ).mappings().first()
     if first is None or first["empty"] or not first["product_id"]:
         raise GateError("slot", "ref_image_0 为空不能探针")
+    first_frame_is_stale(session, segment_id)
     if current["g2"] != "passed":
         raise GateError("g2", "勾选 G2 在首帧入槽之后、探针之前")
-    first_frame_is_stale(session, segment_id)
     reject_wrong_character_audio(audio_binding)
     saved = probe_spec(resolution, mode, duration, rules)
     session.execute(
