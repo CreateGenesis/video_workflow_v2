@@ -96,9 +96,26 @@ def test_invalid_prompt_writes_neither_product_nor_accepted_at(client):
 
 
 def test_agent_cannot_insert_a_business_row(client):
-    response = client.post("/api/agent/insert")
+    before = client.get("/api/products", params={"q": "agent"}).json()["items"]
+    response = client.post("/api/agent/insert", params={"role": "agent"})
     assert response.status_code == 422
-    assert response.json()["detail"]["code"] == "forbidden"
+    body = response.json()["detail"]
+    assert body["code"] == "forbidden"
+    assert "不能插入" in body["message"]
+    assert client.get("/api/products", params={"q": "agent"}).json()["items"] == before
+    episode = client.post("/api/episodes", params={"role": "agent"})
+    assert episode.status_code == 422
+    assert "不能插入" in episode.json()["detail"]["message"]
+    created = client.post("/api/episodes", params={"role": "platform"})
+    assert created.status_code == 200
+    segments = client.post(
+        f"/api/episodes/{created.json()['id']}/segments",
+        params={"role": "agent"},
+        json=[{"number": 1, "duration": 6, "cast": ["A"], "scene": "夜", "action": "走", "dialogue": "无", "end_state": "停"}],
+    )
+    assert segments.status_code == 422
+    assert "不能插入" in segments.json()["detail"]["message"]
+    assert client.get(f"/api/episodes/{created.json()['id']}/segments").json()["items"] == []
 
 
 def test_secret_never_enters_job_input(client):

@@ -159,9 +159,16 @@ def complete(session: Session, job_id: str, owner: str, output: dict[str, Any] |
     return _row(session, job_id) or row
 
 
-def agent_insert_business(session: Session) -> None:
-    """The agent role has no INSERT on business tables. This is the platform-side proof of that ban."""
-    raise GateError("forbidden", "agent 不能插入业务行")
+def reject_agent_insert(role: str) -> None:
+    """The agent role has no INSERT on business tables. Platform commands pass."""
+    if role == "agent":
+        raise GateError("forbidden", "agent 不能插入业务行")
+
+
+def agent_insert_business(session: Session, role: str = "agent") -> None:
+    """Kept for the dedicated ban route. It uses the same sentence as every business insert."""
+    reject_agent_insert(role)
+    session.execute(text("INSERT INTO products (id, workspace_id, kind, status, prompt) VALUES ('agent-row', 'ws', 'image', 'succeeded', 'agent')"))
 
 
 def inspect(session: Session, *, now: datetime | None = None) -> list[dict[str, Any]]:

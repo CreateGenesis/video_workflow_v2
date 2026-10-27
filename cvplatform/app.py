@@ -46,7 +46,7 @@ from cvplatform.gates import (
     probe_aspect_reference,
     require_price,
 )
-from cvplatform.jobs import accept_write_prompt, agent_insert_business, claim, complete, enqueue, inspect
+from cvplatform.jobs import accept_write_prompt, agent_insert_business, claim, complete, enqueue, inspect, reject_agent_insert
 from cvplatform.probes import (
     judge_benchmark,
     may_create_segment_script,
@@ -96,6 +96,14 @@ class PublishIn(BaseModel):
 
 def _fail(exc: GateError) -> HTTPException:
     return HTTPException(status_code=422, detail={"code": exc.code, "message": exc.message})
+
+
+def _role(role: str) -> str:
+    try:
+        reject_agent_insert(role)
+    except GateError as exc:
+        raise _fail(exc) from exc
+    return role
 
 
 from contextlib import asynccontextmanager
@@ -185,23 +193,31 @@ def post_inspect() -> dict[str, Any]:
 
 
 @app.post("/api/agent/insert")
-def post_agent_insert() -> dict[str, Any]:
+def post_agent_insert(role: str = "agent") -> dict[str, Any]:
     try:
         with session() as db:
-            agent_insert_business(db)
+            agent_insert_business(db, role)
     except GateError as exc:
         raise _fail(exc) from exc
     return {"ok": True}
 
 
 @app.post("/api/episodes")
-def post_episode(workspace_id: str = "ws") -> dict[str, str]:
+def post_episode(workspace_id: str = "ws", role: str = "platform") -> dict[str, str]:
+    _role(role)
     with session() as db:
         return {"id": create_episode(db, workspace_id)}
 
 
+@app.get("/api/episodes/{episode_id}/segments")
+def get_segments(episode_id: str) -> dict[str, Any]:
+    with session() as db:
+        return {"items": list_segments(db, episode_id)}
+
+
 @app.post("/api/episodes/{episode_id}/segments")
-def post_segments(episode_id: str, rows: list[SegmentIn], dialogue_mode: str | None = None) -> dict[str, Any]:
+def post_segments(episode_id: str, rows: list[SegmentIn], dialogue_mode: str | None = None, role: str = "platform") -> dict[str, Any]:
+    _role(role)
     try:
         with session() as db:
             from cvplatform.comic import save_segments
@@ -284,7 +300,8 @@ class SlotIn(BaseModel):
 
 
 @app.post("/api/episodes/{episode_id}/slots")
-def post_slot(episode_id: str, body: SlotIn) -> dict[str, Any]:
+def post_slot(episode_id: str, body: SlotIn, role: str = "platform") -> dict[str, Any]:
+    _role(role)
     try:
         with session() as db:
             return assign_slot(db, episode_id, **body.model_dump())
@@ -310,7 +327,8 @@ class PromoteIn(BaseModel):
 
 
 @app.post("/api/products/{product_id}/promote")
-def post_promote(product_id: str, body: PromoteIn) -> dict[str, Any]:
+def post_promote(product_id: str, body: PromoteIn, role: str = "platform") -> dict[str, Any]:
+    _role(role)
     try:
         with session() as db:
             return promote(db, product_id, body.kind, body.lock_text)
