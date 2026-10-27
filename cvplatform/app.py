@@ -644,14 +644,20 @@ def g4_rule(segment_id: str, number: int) -> dict[str, Any]:
 
 
 class ConcatIn(BaseModel):
-    segments: list[dict[str, Any]]
-    episode: dict[str, Any]
+    episode_id: str
+    segments: list[dict[str, Any]] | None = None
+    episode: dict[str, Any] | None = None
+    g4: str | None = None
 
 
 @app.post("/api/concat/ready")
 def post_concat(body: ConcatIn) -> dict[str, Any]:
+    """Concat reads stored segments.g4. A caller-supplied g4 body is rejected."""
+    if body.g4 is not None or (body.segments and any("g4" in segment for segment in body.segments)):
+        raise _fail(GateError("g4", "拼接只读已保存的 G4，不接受调用方自带的 G4"))
     try:
-        return concat_ready(body.segments, body.episode)
+        with session() as db:
+            return concat_episode(db, body.episode_id)
     except GateError as exc:
         raise _fail(exc) from exc
 

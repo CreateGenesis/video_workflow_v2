@@ -257,19 +257,56 @@ def test_mark_failed_and_image_version_follow_the_table(client):
     with session() as db:
         db.execute(text("INSERT INTO assets (id, workspace_id, name, kind, kept) VALUES ('role-can', 'ws', '红罐', '角色', 1)"))
         db.execute(text("INSERT INTO asset_versions (id, asset_id, version, lock_text, accepted) VALUES ('ver-can-1', 'role-can', 1, '红罐', 1)"))
+    role = client.post(
+        f"/api/episodes/{episode}/slots",
+        json={"asset_id": "role-can", "kind": "角色", "number": 1, "segment_id": segment_id, "product_id": "role-file"},
+    )
+    assert role.status_code == 200
+    with session() as db:
+        frame = db.execute(
+            text("SELECT kind, asset_id, product_id, asset_version_id FROM slots WHERE segment_id = :id AND kind = '首帧'"),
+            {"id": segment_id},
+        ).mappings().one()
         db.execute(
-            text("UPDATE slots SET asset_id = 'role-can', asset_version_id = 'ver-can-1' WHERE segment_id = :id AND kind = '首帧'"),
+            text("UPDATE slots SET asset_version_id = 'ver-can-1' WHERE segment_id = :id AND kind = '首帧'"),
             {"id": segment_id},
         )
+    assert frame["kind"] == "首帧"
+    assert frame["asset_id"] == "frame"
+    assert frame["product_id"] == "frame-file"
     bumped = client.post("/api/assets/role-can/image-version", params={"segment_id": segment_id})
     assert bumped.status_code == 200
+    assert bumped.json()["version"] == 2
     assert bumped.json()["g2"] == "pending"
+    rechecked = client.post(f"/api/segments/{segment_id}/g2", params={"passed": True})
+    assert rechecked.status_code == 422
+    assert rechecked.json()["detail"]["code"] == "first_frame"
     blocked_probe = client.post(
         f"/api/segments/{segment_id}/probe",
         params={"resolution": "480p", "mode": "高速", "duration": 2, "seed": "9"},
     )
     assert blocked_probe.status_code == 422
-    assert blocked_probe.json()["detail"]["code"] == "g2"
+    with session() as db:
+        still = db.execute(
+            text("SELECT kind, asset_id, product_id FROM slots WHERE segment_id = :id AND kind = '首帧'"),
+            {"id": segment_id},
+        ).mappings().one()
+    assert still["kind"] == "首帧"
+    assert still["asset_id"] == "frame"
+    assert still["product_id"] == "frame-file"
+    replaced = client.post(
+        f"/api/episodes/{episode}/slots",
+        json={"asset_id": "frame", "kind": "首帧", "number": 0, "segment_id": segment_id, "product_id": "frame-file-v2"},
+    )
+    assert replaced.status_code == 200
+    passed = client.post(f"/api/segments/{segment_id}/g2", params={"passed": True})
+    assert passed.status_code == 200
+    assert passed.json()["product_id"] == "frame-file-v2"
+    opened = client.post(
+        f"/api/segments/{segment_id}/probe",
+        params={"resolution": "480p", "mode": "高速", "duration": 2, "seed": "9"},
+    )
+    assert opened.status_code == 200
     assert "next_prompt" not in last["invalidate"]
 
 
@@ -309,25 +346,52 @@ def test_prompt_validation_sentences(client):
 
 
 def test_adsorbed_duration_does_not_count_as_episode_duration(client):
-    segments = [{"number": 1, "duration": 10.13, "g4": "passed"}, {"number": 2, "duration": 10, "g4": "passed"}]
-    episode = {
-        "episode_duration": 20,
-        "aspect": "1080x1920",
-        "segment_size": [1088, 1920],
-        "color_confirmed": True,
-        "subtitles_confirmed": True,
-        "music_confirmed": True,
-        "loudness_confirmed": True,
-    }
-    refused = client.post("/api/concat/ready", json={"segments": segments, "episode": episode})
-    assert refused.status_code == 422
-    assert refused.json()["detail"]["code"] == "episode_duration"
-    matched = client.post(
+    episode_id = client.post("/api/episodes").json()["id"]
+    saved = client.post(
+        f"/api/episodes/{episode_id}/segments",
+        json=[_segment(duration=10.13), _segment(number=2, duration=4.87)],
+    ).json()
+    with session() as db:
+        db.execute(
+            text(
+                """
+                UPDATE episodes
+                SET episode_duration = 20, aspect = '1080x1920',
+                    color_confirmed = 1, subtitles_confirmed = 1, music_confirmed = 1, loudness_confirmed = 1
+                WHERE id = :id
+                """
+            ),
+            {"id": episode_id},
+        )
+        db.execute(text("UPDATE segments SET g4 = 'passed' WHERE episode_id = :id"), {"id": episode_id})
+    caller_g4 = client.post(
         "/api/concat/ready",
-        json={"segments": [{"number": 1, "duration": 10, "g4": "passed"}, {"number": 2, "duration": 10, "g4": "passed"}], "episode": episode},
+        json={
+            "episode_id": episode_id,
+            "segments": [{"number": 1, "duration": 10, "g4": "passed"}, {"number": 2, "duration": 10, "g4": "passed"}],
+            "episode": {"episode_duration": 20, "g4": "passed"},
+        },
     )
+    assert caller_g4.status_code == 422
+    assert caller_g4.json()["detail"]["code"] == "g4"
+    stored = client.post("/api/concat/ready", json={"episode_id": episode_id})
+    assert stored.status_code == 422
+    assert stored.json()["detail"]["code"] == "episode_duration"
+    with session() as db:
+        db.execute(text("UPDATE segments SET duration = 10 WHERE episode_id = :id"), {"id": episode_id})
+        db.execute(text("UPDATE segments SET g4 = 'pending' WHERE id = :id"), {"id": saved["items"][0]["id"]})
+    forged = client.post(
+        "/api/concat/ready",
+        json={"episode_id": episode_id, "segments": [{"number": 1, "duration": 10, "g4": "passed"}]},
+    )
+    assert forged.status_code == 422
+    assert forged.json()["detail"]["code"] == "g4"
+    with session() as db:
+        db.execute(text("UPDATE segments SET g4 = 'passed' WHERE episode_id = :id"), {"id": episode_id})
+    matched = client.post("/api/concat/ready", json={"episode_id": episode_id})
     assert matched.status_code == 200
     assert matched.json()["scale"] == "1080x1920"
+    assert client.post(f"/api/episodes/{episode_id}/concat").status_code == 200
 
 
 def test_concat_price_g1_and_backfill(client):

@@ -255,12 +255,26 @@ def assign_slot(session: Session, episode_id: str, *, asset_id: str, kind: str, 
                 "number": number,
             },
         )
+    pinned = None
+    if kind == "首帧" and segment_id:
+        pinned = latest_image_pin(session, segment_id)
+        replaced = replace_first_frame(
+            session,
+            episode_id,
+            segment_id,
+            asset_id=asset_id,
+            product_id=product_id,
+            pinned=pinned,
+            empty=empty,
+        )
+        if replaced is not None:
+            return replaced
     slot_id = "slot_" + uuid.uuid4().hex[:10]
     session.execute(
         text(
             """
-            INSERT INTO slots (id, episode_id, segment_id, kind, number, asset_id, product_id, empty)
-            VALUES (:id, :episode_id, :segment_id, :kind, :number, :asset_id, :product_id, :empty)
+            INSERT INTO slots (id, episode_id, segment_id, kind, number, asset_id, product_id, asset_version_id, empty)
+            VALUES (:id, :episode_id, :segment_id, :kind, :number, :asset_id, :product_id, :pinned, :empty)
             """
         ),
         {
@@ -271,6 +285,7 @@ def assign_slot(session: Session, episode_id: str, *, asset_id: str, kind: str, 
             "number": number,
             "asset_id": asset_id,
             "product_id": product_id,
+            "pinned": pinned,
             "empty": 1 if empty else 0,
         },
     )
@@ -381,8 +396,89 @@ def accept_segment_script(session: Session, episode_id: str, rows: list[dict[str
     return save_segments(session, episode_id, rows, episode.get("dialogue_mode"))
 
 
+def replace_first_frame(
+    session: Session,
+    episode_id: str,
+    segment_id: str,
+    *,
+    asset_id: str,
+    product_id: str | None,
+    pinned: str | None,
+    empty: bool,
+) -> dict[str, Any] | None:
+    """A new accepted first-frame product replaces ref_image_0. The slot stays kind=首帧."""
+    current = session.execute(
+        text("SELECT id, product_id FROM slots WHERE episode_id = :episode AND segment_id = :segment AND kind = '首帧'"),
+        {"episode": episode_id, "segment": segment_id},
+    ).mappings().first()
+    if current is None:
+        return None
+    if product_id and product_id == current["product_id"]:
+        raise GateError("first_frame", "旧首帧留在槽里就不能探针")
+    session.execute(
+        text(
+            """
+            UPDATE slots
+            SET asset_id = :asset_id, product_id = :product_id, asset_version_id = :pinned, empty = :empty
+            WHERE id = :id
+            """
+        ),
+        {
+            "asset_id": asset_id,
+            "product_id": product_id,
+            "pinned": pinned,
+            "empty": 1 if empty else 0,
+            "id": current["id"],
+        },
+    )
+    return {"id": current["id"], "number": 0, "binding": {}, "product_id": product_id, "replaced": True}
+
+
+def latest_image_pin(session: Session, segment_id: str) -> str | None:
+    """Highest accepted image version among this segment's character, scene, and prop slots."""
+    row = session.execute(
+        text(
+            """
+            SELECT asset_versions.id
+            FROM slots
+            JOIN assets ON assets.id = slots.asset_id
+            JOIN asset_versions ON asset_versions.asset_id = assets.id
+            WHERE slots.segment_id = :id
+              AND slots.kind IN ('角色', '场景', '道具')
+              AND asset_versions.accepted = 1
+            ORDER BY asset_versions.version DESC, asset_versions.id DESC
+            """
+        ),
+        {"id": segment_id},
+    ).first()
+    return None if row is None else row[0]
+
+
+def first_frame_is_stale(session: Session, segment_id: str) -> bool:
+    """A real 首帧 slot stays kind=首帧. Its pinned image version is compared with the latest character, scene, or prop version."""
+    from cvplatform.gates import old_first_frame_blocks
+
+    first = session.execute(
+        text(
+            """
+            SELECT id, asset_id, asset_version_id, product_id, kind
+            FROM slots
+            WHERE segment_id = :id AND kind = '首帧' AND empty = 0
+            """
+        ),
+        {"id": segment_id},
+    ).mappings().first()
+    if first is None:
+        return False
+    current_pin = latest_image_pin(session, segment_id)
+    pinned = first["asset_version_id"]
+    stale = current_pin is not None and pinned != current_pin
+    old_first_frame_blocks(stale)
+    return stale
+
+
 def submit_probe(session: Session, segment_id: str, *, resolution: str, mode: str, duration: float, rules: dict[str, Any], seed: str, audio_binding: str = "") -> dict[str, Any]:
-    from cvplatform.gates import old_first_frame_blocks, reject_wrong_character_audio
+    from cvplatform.gates import reject_wrong_character_audio
 
     if not seed:
         raise GateError("seed", "没有 seed 就拒绝探针")
@@ -399,24 +495,7 @@ def submit_probe(session: Session, segment_id: str, *, resolution: str, mode: st
         raise GateError("slot", "ref_image_0 为空不能探针")
     if current["g2"] != "passed":
         raise GateError("g2", "勾选 G2 在首帧入槽之后、探针之前")
-    stale = session.execute(
-        text(
-            """
-            SELECT slots.id
-            FROM slots
-            JOIN asset_versions ON asset_versions.id = slots.asset_version_id
-            JOIN assets ON assets.id = slots.asset_id
-            WHERE slots.segment_id = :id
-              AND slots.kind = '首帧'
-              AND assets.kind IN ('角色', '场景', '道具')
-              AND asset_versions.version < (
-                SELECT MAX(version) FROM asset_versions newer WHERE newer.asset_id = slots.asset_id
-              )
-            """
-        ),
-        {"id": segment_id},
-    ).first()
-    old_first_frame_blocks(stale is not None)
+    first_frame_is_stale(session, segment_id)
     reject_wrong_character_audio(audio_binding)
     saved = probe_spec(resolution, mode, duration, rules)
     session.execute(
@@ -513,14 +592,16 @@ def mark_g2(session: Session, segment_id: str, passed: bool) -> dict[str, Any]:
     if current is None:
         raise GateError("missing", "没有这一段")
     first = session.execute(
-        text("SELECT id FROM slots WHERE segment_id = :id AND kind = '首帧' AND empty = 0 AND product_id IS NOT NULL"),
+        text("SELECT id, product_id FROM slots WHERE segment_id = :id AND kind = '首帧' AND empty = 0 AND product_id IS NOT NULL"),
         {"id": segment_id},
-    ).first()
+    ).mappings().first()
     if first is None:
         raise GateError("slot", "勾选 G2 在首帧入槽之后")
+    if passed:
+        first_frame_is_stale(session, segment_id)
     value = "passed" if passed else "pending"
     session.execute(text("UPDATE segments SET g2 = :g2 WHERE id = :id"), {"g2": value, "id": segment_id})
-    return {"id": segment_id, "g2": value}
+    return {"id": segment_id, "g2": value, "product_id": first["product_id"]}
 
 
 def mark_qc(session: Session, segment_id: str, passed: bool) -> dict[str, Any]:
@@ -534,7 +615,7 @@ def mark_qc(session: Session, segment_id: str, passed: bool) -> dict[str, Any]:
 
 
 def bump_image_version(session: Session, asset_id: str, segment_id: str) -> dict[str, Any]:
-    """A character, scene, or prop image bump clears G2. The old first frame stays slotted."""
+    """An image bump clears G2. The old 首帧 product stays until a new accepted frame replaces ref_image_0."""
     asset = session.execute(text("SELECT kind FROM assets WHERE id = :id"), {"id": asset_id}).mappings().first()
     if asset is None or asset["kind"] not in {"角色", "场景", "道具"}:
         raise GateError("version", "只升角色、场景或道具的图像版本才作废 G2")
@@ -549,7 +630,7 @@ def bump_image_version(session: Session, asset_id: str, segment_id: str) -> dict
         {"id": version_id, "asset_id": asset_id, "version": version},
     )
     session.execute(text("UPDATE segments SET g2 = 'pending', g4 = 'pending' WHERE id = :id"), {"id": segment_id})
-    return {"asset_id": asset_id, "version": version, "g2": "pending"}
+    return {"asset_id": asset_id, "version": version, "version_id": version_id, "g2": "pending"}
 
 
 def concat_episode(session: Session, episode_id: str) -> dict[str, Any]:
