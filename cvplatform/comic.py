@@ -470,6 +470,14 @@ def lock_lines(slots: list[dict[str, Any]]) -> list[str]:
     return subject_lines(slots)
 
 
+def asset_lock_text(session: Session, asset_id: str) -> str | None:
+    row = session.execute(
+        text("SELECT lock_text FROM asset_versions WHERE asset_id = :id ORDER BY version DESC"),
+        {"id": asset_id},
+    ).first()
+    return None if row is None else row[0]
+
+
 def search_products(session: Session, query: str) -> list[dict[str, Any]]:
     rows = session.execute(
         text("SELECT * FROM products WHERE prompt LIKE :q AND status = 'succeeded' ORDER BY created_at"),

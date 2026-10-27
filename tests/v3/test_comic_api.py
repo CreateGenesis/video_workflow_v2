@@ -84,10 +84,32 @@ def test_product_search_and_promote_boundary(client):
                 """
             )
         )
+    with session() as db:
+        db.execute(
+            text(
+                """
+                INSERT INTO products (id, workspace_id, kind, status, prompt, title, accepted, created_at)
+                VALUES ('p-failed', 'ws', 'video', 'failed', 'failed skateboard take', 'failed', 0, 't')
+                """
+            )
+        )
     found = client.get("/api/products", params={"q": "skateboard"}).json()
     assert [item["id"] for item in found["items"]] == ["p1"]
-    promoted = client.post("/api/products/p1/promote", json={"kind": "三视图", "lock_text": "红罐锁段"}).json()
-    assert promoted["lock_text"] == "红罐锁段"
+    with session() as db:
+        db.execute(
+            text(
+                """
+                INSERT INTO jobs (id, workspace_id, type, input, output, status, attempt, max_attempts, created_at)
+                VALUES ('job-draft', 'ws', 'extract_reference', '{}', :output, 'succeeded', 1, 3, 't')
+                """
+            ),
+            {"output": '{"draft":"模型起草的短句"}'},
+        )
+        db.execute(text("UPDATE products SET origin_job_id = 'job-draft' WHERE id = 'p1'"))
+    promoted = client.post("/api/products/p1/promote", json={"kind": "三视图", "lock_text": "人提交的最终原文"}).json()
+    stored = client.get(f"/api/assets/{promoted['asset_id']}/lock").json()
+    assert stored["lock_text"] == "人提交的最终原文"
+    assert "模型起草" not in stored["lock_text"]
     blocked = client.post("/api/products/p1/promote", json={"kind": "首帧", "lock_text": "x"})
     assert blocked.status_code == 422
     unaccepted = client.post("/api/products/p2/promote", json={"kind": "道具", "lock_text": "纱布"})

@@ -258,6 +258,28 @@ def test_prompt_validation_sentences(client):
     assert errors == []
 
 
+def test_adsorbed_duration_does_not_count_as_episode_duration(client):
+    segments = [{"number": 1, "duration": 10.13, "g4": "passed"}, {"number": 2, "duration": 10, "g4": "passed"}]
+    episode = {
+        "episode_duration": 20,
+        "aspect": "1080x1920",
+        "segment_size": [1088, 1920],
+        "color_confirmed": True,
+        "subtitles_confirmed": True,
+        "music_confirmed": True,
+        "loudness_confirmed": True,
+    }
+    refused = client.post("/api/concat/ready", json={"segments": segments, "episode": episode})
+    assert refused.status_code == 422
+    assert refused.json()["detail"]["code"] == "episode_duration"
+    matched = client.post(
+        "/api/concat/ready",
+        json={"segments": [{"number": 1, "duration": 10, "g4": "passed"}, {"number": 2, "duration": 10, "g4": "passed"}], "episode": episode},
+    )
+    assert matched.status_code == 200
+    assert matched.json()["scale"] == "1080x1920"
+
+
 def test_concat_price_g1_and_backfill(client):
     missing_price = client.post("/api/estimate", params={"kind": "video", "quantity": 10})
     assert missing_price.status_code == 422

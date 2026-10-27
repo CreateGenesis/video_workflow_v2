@@ -22,6 +22,7 @@ from cvplatform.comic import (
     graph_for,
     latest_probe,
     list_segments,
+    asset_lock_text,
     lock_lines,
     mark_speakers,
     promote,
@@ -39,6 +40,7 @@ from cvplatform.gates import (
     GateError,
     can_generate_first_frame,
     command_before,
+    concat_ready,
     forbid_reference_write,
     g4_checks_seam,
     may_export_ids,
@@ -315,6 +317,12 @@ def get_graph(segment_id: str) -> dict[str, Any]:
         return {"items": graph_for(db, segment_id)}
 
 
+@app.get("/api/assets/{asset_id}/lock")
+def get_asset_lock(asset_id: str) -> dict[str, Any]:
+    with session() as db:
+        return {"lock_text": asset_lock_text(db, asset_id)}
+
+
 @app.get("/api/products")
 def get_products(q: str = "") -> dict[str, Any]:
     with session() as db:
@@ -535,6 +543,19 @@ def first_frame_allowed(body: FrameAllow) -> dict[str, bool]:
 @app.get("/api/segments/{segment_id}/g4")
 def g4_rule(segment_id: str, number: int) -> dict[str, Any]:
     return {"segment_id": segment_id, "checks_seam": g4_checks_seam(number)}
+
+
+class ConcatIn(BaseModel):
+    segments: list[dict[str, Any]]
+    episode: dict[str, Any]
+
+
+@app.post("/api/concat/ready")
+def post_concat(body: ConcatIn) -> dict[str, Any]:
+    try:
+        return concat_ready(body.segments, body.episode)
+    except GateError as exc:
+        raise _fail(exc) from exc
 
 
 @app.post("/api/estimate")
