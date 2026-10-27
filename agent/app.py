@@ -27,7 +27,13 @@ def claim_once(owner: str = "agent-1") -> dict[str, Any]:
     response = httpx.post(f"{platform_base()}/api/jobs/claim", params={"owner": owner}, timeout=10)
     response.raise_for_status()
     body = response.json()
-    body["model_called"] = bool(body.get("claimed"))
+    job = body.get("job") or {}
+    if body.get("claimed"):
+        body["member"] = route(str(job.get("type") or ""))
+        body["model_called"] = True
+    else:
+        body["member"] = None
+        body["model_called"] = False
     body["process"] = PROCESS
     return body
 
